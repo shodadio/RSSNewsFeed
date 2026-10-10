@@ -25,6 +25,7 @@ import {
 import { Feed } from '../types';
 import { getStorageMode, setStorageMode, saveLocalFeeds } from '../utils/storage';
 import { getAuthHeaders } from '../utils/api';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -60,6 +61,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const [authRequired, setAuthRequired] = useState(true);
   const [togglingAuth, setTogglingAuth] = useState(false);
+  const [confirmDeleteFeed, setConfirmDeleteFeed] = useState<Feed | null>(null);
 
   useEffect(() => {
     fetch('/api/auth/verify', { headers: getAuthHeaders() })
@@ -429,7 +431,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="text-[10px] text-slate-500 truncate">{feed.url}</div>
                 </div>
                 <button
-                  onClick={() => onDeleteFeed(feed.id)}
+                  onClick={() => setConfirmDeleteFeed(feed)}
                   className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition shrink-0"
                   title="Unsubscribe"
                 >
@@ -440,6 +442,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmDeleteFeed !== null}
+        title="Unsubscribe from feed?"
+        message={`This removes "${confirmDeleteFeed?.title ?? ''}" and its articles from your library. You can add it again later.`}
+        confirmLabel="Unsubscribe"
+        destructive
+        onCancel={() => setConfirmDeleteFeed(null)}
+        onConfirm={() => {
+          if (confirmDeleteFeed) onDeleteFeed(confirmDeleteFeed.id);
+          setConfirmDeleteFeed(null);
+        }}
+      />
     </div>
   );
 };

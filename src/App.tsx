@@ -71,7 +71,12 @@ interface PendingDelete {
   wasArchived: boolean;
 }
 
-// How long the user has to undo an article deletion before the toast expires.
+// Undoable destructive actions share a single transient toast slot.
+type PendingUndo =
+  | { id: number; kind: 'delete'; entries: PendingDelete[] }
+  | { id: number; kind: 'markRead'; ids: string[] };
+
+// How long the user has to undo a destructive action before the toast expires.
 const UNDO_WINDOW_MS = 6000;
 
 export default function App() {
@@ -126,9 +131,10 @@ export default function App() {
   const [deletedFeedUrls, setDeletedFeedUrls] = useState<Set<string>>(() => getLocalDeletedFeedUrls());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Undo affordance for destructive actions (article deletion)
-  const [pendingDeletes, setPendingDeletes] = useState<PendingDelete[]>([]);
+  // Single-slot undo affordance for destructive actions
+  const [pendingUndo, setPendingUndo] = useState<PendingUndo | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const undoSeqRef = useRef(0);
 
   // AI Briefing State
   const [aiBriefing, setAiBriefing] = useState<AIBriefing | null>(null);
@@ -162,12 +168,22 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Clear the pending-undo timer on unmount
+  // (Re)start the undo countdown whenever a new undoable action is queued, and
+  // clear it on unmount.
   useEffect(() => {
+    if (!pendingUndo) return;
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => {
+      setPendingUndo(null);
+      undoTimerRef.current = null;
+    }, UNDO_WINDOW_MS);
     return () => {
-      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      if (undoTimerRef.current) {
+        clearTimeout(undoTimerRef.current);
+        undoTimerRef.current = null;
+      }
     };
-  }, []);
+  }, [pendingUndo]);
 
   // State refs to prevent stale closures and infinite effect loops
   const feedsRef = useRef(feeds);
@@ -460,16 +476,18 @@ export default function App() {
     // the user gets a short window to restore the article.
     const removed = articlesRef.current.find((a) => a.id === articleId);
     if (removed) {
-      const wasArchived = archivedRef.current.has(articleId);
-      setPendingDeletes((prev) => [
-        ...prev.filter((entry) => entry.article.id !== articleId),
-        { article: removed, wasArchived }
-      ]);
-      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-      undoTimerRef.current = setTimeout(() => {
-        setPendingDeletes([]);
-        undoTimerRef.current = null;
-      }, UNDO_WINDOW_MS);
+      const entry: PendingDelete = {
+        article: removed,
+        wasArchived: archivedRef.current.has(articleId)
+      };
+      setPendingUndo((prev) => {
+        const prevEntries = prev && prev.kind === 'delete' ? prev.entries : [];
+        return {
+          id: ++undoSeqRef.current,
+          kind: 'delete',
+          entries: [...prevEntries.filter((e) => e.article.id !== articleId), entry]
+        };
+      });
     }
 
     if (selectedArticleId === articleId) {
@@ -485,19 +503,12 @@ export default function App() {
     }).catch(console.error);
   }, [selectedArticleId, syncStateWithServer, isMobile]);
 
-  // Undo a queued article deletion (restores it locally and on the server)
-  const handleUndoDelete = useCallback(() => {
-    const toRestore = pendingDeletes;
-    if (toRestore.length === 0) return;
+  // Undo a queued article deletion (restores articles locally and on the server)
+  const restoreDeletedArticles = useCallback((entries: PendingDelete[]) => {
+    if (entries.length === 0) return;
 
-    if (undoTimerRef.current) {
-      clearTimeout(undoTimerRef.current);
-      undoTimerRef.current = null;
-    }
-    setPendingDeletes([]);
-
-    const restoredIds = new Set(toRestore.map((entry) => entry.article.id));
-    const reArchiveIds = toRestore
+    const restoredIds = new Set(entries.map((entry) => entry.article.id));
+    const reArchiveIds = entries
       .filter((entry) => entry.wasArchived)
       .map((entry) => entry.article.id);
 
@@ -521,7 +532,7 @@ export default function App() {
 
     setArticles((prev) => {
       const existing = new Set(prev.map((a) => a.id));
-      const toAdd = toRestore
+      const toAdd = entries
         .map((entry) => entry.article)
         .filter((a) => !existing.has(a.id));
       const merged = [...prev, ...toAdd].sort(
@@ -536,15 +547,34 @@ export default function App() {
       headers: getAuthHeaders(),
       body: JSON.stringify({ action: 'restore', articleIds: Array.from(restoredIds) })
     }).catch(console.error);
-  }, [pendingDeletes, syncStateWithServer]);
+  }, [syncStateWithServer]);
 
-  const handleDismissUndo = useCallback(() => {
-    if (undoTimerRef.current) {
-      clearTimeout(undoTimerRef.current);
-      undoTimerRef.current = null;
+  // Undo a "mark all as read" (reverts only the articles that were newly read)
+  const unmarkArticlesRead = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    setReadArticleIds((prev) => {
+      const next = new Set(prev);
+      idSet.forEach((id) => next.delete(id));
+      saveLocalArticleState(next);
+      syncStateWithServer(undefined, next);
+      return next;
+    });
+  }, [syncStateWithServer]);
+
+  // Reverse whichever destructive action is currently pending
+  const handleUndo = useCallback(() => {
+    const current = pendingUndo;
+    setPendingUndo(null);
+    if (!current) return;
+    if (current.kind === 'delete') {
+      restoreDeletedArticles(current.entries);
+    } else {
+      unmarkArticlesRead(current.ids);
     }
-    setPendingDeletes([]);
-  }, []);
+  }, [pendingUndo, restoreDeletedArticles, unmarkArticlesRead]);
+
+  const handleDismissUndo = useCallback(() => setPendingUndo(null), []);
 
   // Update Article Handler (editing entry including podcast title)
   const handleUpdateArticle = useCallback((updatedArticle: Article) => {
@@ -665,16 +695,23 @@ export default function App() {
     });
   }, [articles, activeFilter, feeds, readArticleIds, starredArticleIds, archivedArticleIds, deletedArticleIds]);
 
-  // Mark All As Read
+  // Mark All As Read (reversible)
   const handleMarkAllAsRead = useCallback(() => {
+    const newlyRead = displayedArticles
+      .filter((a) => !readArticleIds.has(a.id))
+      .map((a) => a.id);
+    if (newlyRead.length === 0) return;
+
     setReadArticleIds((prev) => {
       const next = new Set(prev);
-      displayedArticles.forEach((a) => next.add(a.id));
+      newlyRead.forEach((id) => next.add(id));
       saveLocalArticleState(next);
       syncStateWithServer(undefined, next);
       return next;
     });
-  }, [syncStateWithServer, displayedArticles]);
+
+    setPendingUndo({ id: ++undoSeqRef.current, kind: 'markRead', ids: newlyRead });
+  }, [displayedArticles, readArticleIds, syncStateWithServer]);
 
   // Toggle Star Handler
   const handleToggleStar = useCallback((articleId: string, e?: React.MouseEvent) => {
@@ -852,6 +889,14 @@ export default function App() {
     setIsAuthenticated(false);
   };
 
+  const undoMessage = pendingUndo
+    ? pendingUndo.kind === 'delete'
+      ? pendingUndo.entries.length === 1
+        ? 'Article deleted'
+        : `${pendingUndo.entries.length} articles deleted`
+      : `${pendingUndo.ids.length} ${pendingUndo.ids.length === 1 ? 'article' : 'articles'} marked as read`
+    : '';
+
   return (
     <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-black text-slate-100 font-sans selection:bg-[#0A84FF]/30 selection:text-white">
       {/* Auth Screen Lock / Unlock Modal */}
@@ -873,14 +918,11 @@ export default function App() {
       <OfflineIndicator />
 
       {/* Undo affordance for destructive actions */}
-      {pendingDeletes.length > 0 && (
+      {pendingUndo && (
         <UndoToast
-          message={
-            pendingDeletes.length === 1
-              ? 'Article deleted'
-              : `${pendingDeletes.length} articles deleted`
-          }
-          onUndo={handleUndoDelete}
+          key={pendingUndo.id}
+          message={undoMessage}
+          onUndo={handleUndo}
           onDismiss={handleDismissUndo}
         />
       )}

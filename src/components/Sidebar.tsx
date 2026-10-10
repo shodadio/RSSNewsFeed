@@ -29,6 +29,7 @@ import { PWAInstallGuide } from './PWAInstallGuide';
 import { AIBriefCard } from './AIBriefCard';
 import { formatTag, isMetaTag } from '../utils/tagUtils';
 import { useLongPressReorder } from '../hooks/useLongPressReorder';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface SidebarProps {
   feeds: Feed[];
@@ -196,6 +197,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [feedActionTarget, setFeedActionTarget] = useState<Feed | null>(null);
+  const [confirmDeleteFeed, setConfirmDeleteFeed] = useState<Feed | null>(null);
   const feedLongPressTimer = useRef<NodeJS.Timeout | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -548,7 +550,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (onDeleteFeed) onDeleteFeed(feedActionTarget.id);
+                  setConfirmDeleteFeed(feedActionTarget);
                   setFeedActionTarget(null);
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-rose-500/10 text-rose-400 hover:text-rose-300 transition"
@@ -574,6 +576,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>,
         document.body
       )}
+
+      {/* Feed unsubscribe confirmation */}
+      <ConfirmDialog
+        isOpen={confirmDeleteFeed !== null}
+        title="Unsubscribe from feed?"
+        message={`This removes "${confirmDeleteFeed?.title ?? ''}" and its articles from your library. You can add it again later.`}
+        confirmLabel="Unsubscribe"
+        destructive
+        onCancel={() => setConfirmDeleteFeed(null)}
+        onConfirm={() => {
+          if (confirmDeleteFeed && onDeleteFeed) onDeleteFeed(confirmDeleteFeed.id);
+          setConfirmDeleteFeed(null);
+        }}
+      />
     </aside>
   );
 };
