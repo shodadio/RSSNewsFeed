@@ -1352,6 +1352,8 @@ app.post('/api/articles/action', requireAuth, (req: Request, res: Response) => {
     if (action === 'delete') {
       deletedSet.add(id);
       archivedSet.delete(id);
+    } else if (action === 'restore') {
+      deletedSet.delete(id);
     } else if (action === 'archive') {
       archivedSet.add(id);
     } else if (action === 'unarchive') {

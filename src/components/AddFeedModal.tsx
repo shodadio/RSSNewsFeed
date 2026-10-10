@@ -77,6 +77,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
   const [recommendedError, setRecommendedError] = useState<string | null>(null);
   const [recommendedSource, setRecommendedSource] = useState<string>('');
   const [justAddedUrls, setJustAddedUrls] = useState<Set<string>>(new Set());
+  const [showAddAllConfirm, setShowAddAllConfirm] = useState(false);
 
   // AI Feed Discovery state
   const [aiQuery, setAiQuery] = useState('');
@@ -305,6 +306,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
   ).length;
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
       <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 p-5 sm:p-6 shadow-2xl relative text-slate-100 max-h-[90dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
         <button
@@ -415,7 +417,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
                 {unaddedCount > 0 && (
                   <button
                     type="button"
-                    onClick={handleAddAllRecommended}
+                    onClick={() => setShowAddAllConfirm(true)}
                     className="h-8 px-3.5 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 rounded-lg text-xs font-bold transition inline-flex items-center gap-1.5 shadow-md shrink-0"
                   >
                     <CheckCheck className="w-3.5 h-3.5" />
@@ -832,6 +834,49 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
         )}
       </div>
     </div>
+
+    {/* Bulk Add Confirmation */}
+    {showAddAllConfirm && (
+      <div
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+        onClick={() => setShowAddAllConfirm(false)}
+      >
+        <div
+          className="w-full max-w-sm rounded-2xl bg-slate-900 border border-slate-800 p-5 shadow-2xl text-slate-100 animate-in zoom-in-95 duration-150"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h4 className="text-sm font-bold text-white flex items-center gap-2">
+            <CheckCheck className="w-4 h-4 text-amber-400" />
+            <span>Add {unaddedCount} recommended {unaddedCount === 1 ? 'feed' : 'feeds'}?</span>
+          </h4>
+          <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+            This subscribes you to {unaddedCount} new {unaddedCount === 1 ? 'feed' : 'feeds'} and starts
+            fetching their articles. You can remove any feed later from Settings.
+          </p>
+          <div className="flex justify-end gap-2.5 pt-4 mt-4 border-t border-slate-800">
+            <button
+              type="button"
+              onClick={() => setShowAddAllConfirm(false)}
+              className="h-9 px-4 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition inline-flex items-center justify-center"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAddAllConfirm(false);
+                handleAddAllRecommended();
+              }}
+              className="h-9 px-4 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 transition inline-flex items-center justify-center gap-1.5 shadow-md"
+            >
+              <CheckCheck className="w-3.5 h-3.5" />
+              <span>Add {unaddedCount} {unaddedCount === 1 ? 'Feed' : 'Feeds'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 };
 

@@ -11,6 +11,7 @@ import { AuthModal } from './components/AuthModal';
 import { AddFeedModal } from './components/AddFeedModal';
 import { SettingsModal } from './components/SettingsModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { UndoToast } from './components/UndoToast';
 import { Feed, Article, SmartFilter, AIBriefing } from './types';
 import {
   getLocalFeeds,
@@ -65,6 +66,14 @@ const DEFAULT_FEEDS: Feed[] = [
   }
 ];
 
+interface PendingDelete {
+  article: Article;
+  wasArchived: boolean;
+}
+
+// How long the user has to undo an article deletion before the toast expires.
+const UNDO_WINDOW_MS = 6000;
+
 export default function App() {
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -117,6 +126,10 @@ export default function App() {
   const [deletedFeedUrls, setDeletedFeedUrls] = useState<Set<string>>(() => getLocalDeletedFeedUrls());
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Undo affordance for destructive actions (article deletion)
+  const [pendingDeletes, setPendingDeletes] = useState<PendingDelete[]>([]);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // AI Briefing State
   const [aiBriefing, setAiBriefing] = useState<AIBriefing | null>(null);
   const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
@@ -149,9 +162,18 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Clear the pending-undo timer on unmount
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    };
+  }, []);
+
   // State refs to prevent stale closures and infinite effect loops
   const feedsRef = useRef(feeds);
   feedsRef.current = feeds;
+  const articlesRef = useRef(articles);
+  articlesRef.current = articles;
   const readRef = useRef(readArticleIds);
   readRef.current = readArticleIds;
   const starredRef = useRef(starredArticleIds);
@@ -433,6 +455,23 @@ export default function App() {
       saveLocalCachedArticles(filtered);
       return filtered;
     });
+
+    // Queue a transient undo affordance. The deletion is applied immediately;
+    // the user gets a short window to restore the article.
+    const removed = articlesRef.current.find((a) => a.id === articleId);
+    if (removed) {
+      const wasArchived = archivedRef.current.has(articleId);
+      setPendingDeletes((prev) => [
+        ...prev.filter((entry) => entry.article.id !== articleId),
+        { article: removed, wasArchived }
+      ]);
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = setTimeout(() => {
+        setPendingDeletes([]);
+        undoTimerRef.current = null;
+      }, UNDO_WINDOW_MS);
+    }
+
     if (selectedArticleId === articleId) {
       setSelectedArticleId(null);
       if (isMobile) {
@@ -445,6 +484,67 @@ export default function App() {
       body: JSON.stringify({ action: 'delete', articleId })
     }).catch(console.error);
   }, [selectedArticleId, syncStateWithServer, isMobile]);
+
+  // Undo a queued article deletion (restores it locally and on the server)
+  const handleUndoDelete = useCallback(() => {
+    const toRestore = pendingDeletes;
+    if (toRestore.length === 0) return;
+
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    setPendingDeletes([]);
+
+    const restoredIds = new Set(toRestore.map((entry) => entry.article.id));
+    const reArchiveIds = toRestore
+      .filter((entry) => entry.wasArchived)
+      .map((entry) => entry.article.id);
+
+    setDeletedArticleIds((prev) => {
+      const next = new Set(prev);
+      restoredIds.forEach((id) => next.delete(id));
+      saveLocalArticleState(undefined, undefined, undefined, next);
+      syncStateWithServer(undefined, undefined, undefined, undefined, next);
+      return next;
+    });
+
+    if (reArchiveIds.length > 0) {
+      setArchivedArticleIds((prev) => {
+        const next = new Set(prev);
+        reArchiveIds.forEach((id) => next.add(id));
+        saveLocalArticleState(undefined, undefined, next);
+        syncStateWithServer(undefined, undefined, next);
+        return next;
+      });
+    }
+
+    setArticles((prev) => {
+      const existing = new Set(prev.map((a) => a.id));
+      const toAdd = toRestore
+        .map((entry) => entry.article)
+        .filter((a) => !existing.has(a.id));
+      const merged = [...prev, ...toAdd].sort(
+        (a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime()
+      );
+      saveLocalCachedArticles(merged);
+      return merged;
+    });
+
+    fetch('/api/articles/action', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'restore', articleIds: Array.from(restoredIds) })
+    }).catch(console.error);
+  }, [pendingDeletes, syncStateWithServer]);
+
+  const handleDismissUndo = useCallback(() => {
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    setPendingDeletes([]);
+  }, []);
 
   // Update Article Handler (editing entry including podcast title)
   const handleUpdateArticle = useCallback((updatedArticle: Article) => {
@@ -771,6 +871,19 @@ export default function App() {
 
       {/* Offline Indicator Toast */}
       <OfflineIndicator />
+
+      {/* Undo affordance for destructive actions */}
+      {pendingDeletes.length > 0 && (
+        <UndoToast
+          message={
+            pendingDeletes.length === 1
+              ? 'Article deleted'
+              : `${pendingDeletes.length} articles deleted`
+          }
+          onUndo={handleUndoDelete}
+          onDismiss={handleDismissUndo}
+        />
+      )}
 
       {/* Modals */}
       <AddFeedModal
