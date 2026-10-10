@@ -28,7 +28,6 @@ import { Feed, SmartFilter, AIBriefing } from '../types';
 import { PWAInstallGuide } from './PWAInstallGuide';
 import { AIBriefCard } from './AIBriefCard';
 import { formatTag, isMetaTag } from '../utils/tagUtils';
-import { useLongPressReorder } from '../hooks/useLongPressReorder';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface SidebarProps {
@@ -41,7 +40,6 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onOpenReader?: () => void;
   onDeleteFeed?: (feedId: string) => void;
-  onReorderFeeds?: (newFeeds: Feed[]) => void;
   unreadCountByFeed: Record<string, number>;
   totalUnreadCount: number;
   todayCount: number;
@@ -56,85 +54,34 @@ interface SidebarProps {
   onDismissBriefing?: () => void;
 }
 
-interface FolderFeedsReorderListProps {
-  folderName: string;
+interface FolderFeedsListProps {
   folderFeeds: Feed[];
-  allFeeds: Feed[];
-  onReorderFeeds?: (newFeeds: Feed[]) => void;
   activeFilter: SmartFilter;
   unreadCountByFeed: Record<string, number>;
   onSelectFilter: (filter: SmartFilter) => void;
-  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   isFeedActive: (feedId: string) => boolean;
   onOpenFeedMenu: (feed: Feed) => void;
 }
 
-const FolderFeedsReorderList: React.FC<FolderFeedsReorderListProps> = ({
-  folderName,
+const FolderFeedsList: React.FC<FolderFeedsListProps> = ({
   folderFeeds,
-  allFeeds,
-  onReorderFeeds,
   activeFilter,
   unreadCountByFeed,
   onSelectFilter,
-  scrollContainerRef,
   isFeedActive,
   onOpenFeedMenu
 }) => {
-  const {
-    isDragging,
-    draggedIndex,
-    overIndex,
-    registerItemRef,
-    handlePointerDown,
-    handlePointerMove,
-    handlePointerUp,
-    getItemStyle
-  } = useLongPressReorder({
-    items: folderFeeds,
-    onReorder: (newFolderFeeds) => {
-      if (onReorderFeeds) {
-        const newAll = [...allFeeds];
-        let idx = 0;
-        for (let i = 0; i < newAll.length; i++) {
-          if ((newAll[i].folder || 'Feeds') === folderName) {
-            newAll[i] = newFolderFeeds[idx++];
-          }
-        }
-        onReorderFeeds(newAll);
-      }
-    },
-    containerRef: scrollContainerRef,
-    longPressDelay: 300,
-    autoScrollThreshold: 70
-  });
-
   return (
     <div className="bg-black/20 divide-y divide-white/[0.04] relative">
-      {folderFeeds.map((feed, index) => {
+      {folderFeeds.map((feed) => {
         const active = isFeedActive(feed.id);
         const count = unreadCountByFeed[feed.id] || 0;
-        const isThisOver = isDragging && overIndex === index && draggedIndex !== index;
 
         return (
-          <div
-            key={feed.id}
-            ref={(el) => registerItemRef(index, el)}
-            style={getItemStyle(index)}
-            onPointerDown={(e) => handlePointerDown(index, e)}
-            onTouchStart={(e) => handlePointerDown(index, e)}
-            onTouchMove={handlePointerMove}
-            onTouchEnd={handlePointerUp}
-            className="relative"
-          >
-            {isThisOver && (
-              <div className="h-0.5 bg-[#0A84FF] shadow-[0_0_8px_#0A84FF] mx-4 rounded-full animate-pulse z-40 relative" />
-            )}
+          <div key={feed.id} className="relative">
             <button
               onClick={() => {
-                if (!isDragging) {
-                  onSelectFilter({ type: 'feed', id: feed.id, title: feed.title });
-                }
+                onSelectFilter({ type: 'feed', id: feed.id, title: feed.title });
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -181,7 +128,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSettings,
   onOpenReader,
   onDeleteFeed,
-  onReorderFeeds,
   unreadCountByFeed,
   totalUnreadCount,
   todayCount,
@@ -198,21 +144,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [feedActionTarget, setFeedActionTarget] = useState<Feed | null>(null);
   const [confirmDeleteFeed, setConfirmDeleteFeed] = useState<Feed | null>(null);
-  const feedLongPressTimer = useRef<NodeJS.Timeout | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-
-  const startFeedLongPress = (feed: Feed) => {
-    feedLongPressTimer.current = setTimeout(() => {
-      setFeedActionTarget(feed);
-    }, 450);
-  };
-
-  const cancelFeedLongPress = () => {
-    if (feedLongPressTimer.current) {
-      clearTimeout(feedLongPressTimer.current);
-      feedLongPressTimer.current = null;
-    }
-  };
 
   const toggleFolder = (folderName: string) => {
     setCollapsedFolders((prev) => ({
@@ -437,17 +369,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </span>
                   </div>
 
-                  {/* Folder Feeds List with Drag & Drop Reordering */}
+                  {/* Folder Feeds List */}
                   {!isCollapsed && (
-                    <FolderFeedsReorderList
-                      folderName={folderName}
+                    <FolderFeedsList
                       folderFeeds={folderFeeds}
-                      allFeeds={feeds}
-                      onReorderFeeds={onReorderFeeds}
                       activeFilter={activeFilter}
                       unreadCountByFeed={unreadCountByFeed}
                       onSelectFilter={onSelectFilter}
-                      scrollContainerRef={scrollContainerRef}
                       isFeedActive={isFeedActive}
                       onOpenFeedMenu={setFeedActionTarget}
                     />

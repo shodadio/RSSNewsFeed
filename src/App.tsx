@@ -734,15 +734,6 @@ export default function App() {
     }).catch(console.error);
   }, [syncStateWithServer]);
 
-  // Reorder articles handler
-  const handleReorderArticles = useCallback((newFiltered: Article[]) => {
-    setArticles((prev) => {
-      const filteredIds = new Set(newFiltered.map((a) => a.id));
-      const rest = prev.filter((a) => !filteredIds.has(a.id));
-      return [...newFiltered, ...rest];
-    });
-  }, []);
-
   // AI Briefing Handler: Synthesizes unread items into an executive briefing
   const handleGenerateBriefing = useCallback(async () => {
     // Gather text, titles, and snippets from the unread articles currently loaded
@@ -1001,7 +992,6 @@ export default function App() {
             isRefreshing={isRefreshing}
             isMobile={false}
             onUpdateArticle={handleUpdateArticle}
-            onReorderArticles={handleReorderArticles}
             aiBriefing={aiBriefing}
             isGeneratingBriefing={isGeneratingBriefing}
             isBriefingExpanded={isBriefingExpanded}
@@ -1107,7 +1097,6 @@ export default function App() {
                   isRefreshing={isRefreshing}
                   isMobile={true}
                   onUpdateArticle={handleUpdateArticle}
-                  onReorderArticles={handleReorderArticles}
                   aiBriefing={aiBriefing}
                   isGeneratingBriefing={isGeneratingBriefing}
                   isBriefingExpanded={isBriefingExpanded}

@@ -34,9 +34,6 @@ interface SwipeableArticleCardProps {
   onUnarchive?: (articleId: string) => void;
   onToggleRead: (articleId: string) => void;
   onUpdateArticle?: (updatedArticle: Article) => void;
-  onPointerDown?: (e: React.PointerEvent | React.TouchEvent) => void;
-  style?: React.CSSProperties;
-  refCallback?: (node: HTMLElement | null) => void;
 }
 
 const ACTION_TRAY_WIDTH = 225; // 75px per action button * 3
@@ -56,10 +53,7 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
   onArchive,
   onUnarchive,
   onToggleRead,
-  onUpdateArticle,
-  onPointerDown,
-  style,
-  refCallback
+  onUpdateArticle
 }) => {
   const [offsetX, setOffsetX] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -175,12 +169,7 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
   };
 
   return (
-    <div
-      ref={refCallback}
-      onPointerDown={onPointerDown}
-      style={style}
-      className="relative overflow-hidden border-b border-white/[0.08] select-none bg-black"
-    >
+    <div className="relative overflow-hidden border-b border-white/[0.08] select-none bg-black">
       {/* Background Action Tray (iOS standard full-height action slots) */}
       <div
         className="absolute inset-y-0 right-0 w-[225px] flex items-stretch z-0 bg-black select-none pointer-events-auto"

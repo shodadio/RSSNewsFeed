@@ -17,7 +17,6 @@ import {
 import { Article, SmartFilter, Feed, AIBriefing } from '../types';
 import { SwipeableArticleCard } from './SwipeableArticleCard';
 import { AIBriefCard } from './AIBriefCard';
-import { useLongPressReorder } from '../hooks/useLongPressReorder';
 
 interface TimelineProps {
   articles: Article[];
@@ -40,7 +39,6 @@ interface TimelineProps {
   isRefreshing?: boolean;
   isMobile: boolean;
   onUpdateArticle?: (updatedArticle: Article) => void;
-  onReorderArticles?: (newArticles: Article[]) => void;
   aiBriefing?: AIBriefing | null;
   isGeneratingBriefing?: boolean;
   isBriefingExpanded?: boolean;
@@ -70,7 +68,6 @@ export const Timeline: React.FC<TimelineProps> = ({
   isRefreshing = false,
   isMobile,
   onUpdateArticle,
-  onReorderArticles,
   aiBriefing = null,
   isGeneratingBriefing = false,
   isBriefingExpanded = true,
@@ -140,21 +137,6 @@ export const Timeline: React.FC<TimelineProps> = ({
       a.feedTitle.toLowerCase().includes(q) ||
       (a.author && a.author.toLowerCase().includes(q))
     );
-  });
-
-  const {
-    registerItemRef,
-    handlePointerDown,
-    getItemStyle
-  } = useLongPressReorder({
-    items: filteredArticles,
-    onReorder: (newFiltered) => {
-      if (onReorderArticles) {
-        onReorderArticles(newFiltered);
-      }
-    },
-    containerRef: scrollContainerRef,
-    longPressDelay: 300
   });
 
   const formatRelativeTime = (dateStr: string) => {
@@ -405,7 +387,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             </div>
           </div>
         ) : (
-          filteredArticles.map((article, index) => {
+          filteredArticles.map((article) => {
             const isSelected = selectedArticleId === article.id;
             const isRead = readArticleIds.has(article.id);
             const isStarred = starredArticleIds.has(article.id);
@@ -430,9 +412,6 @@ export const Timeline: React.FC<TimelineProps> = ({
                 onUnarchive={onUnarchiveArticle}
                 onToggleRead={onToggleRead}
                 onUpdateArticle={onUpdateArticle}
-                onPointerDown={(e) => handlePointerDown(index, e)}
-                style={getItemStyle(index)}
-                refCallback={(el) => registerItemRef(index, el)}
               />
             );
           })
