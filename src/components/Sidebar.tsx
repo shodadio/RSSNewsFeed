@@ -397,24 +397,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 (sum, f) => sum + (unreadCountByFeed[f.id] || 0),
                 0
               );
+              const folderActive = isFolderActive(folderName);
 
               return (
                 <div key={folderName} className="flex flex-col">
                   {/* Folder Header Row */}
-                  <div className="w-full flex items-center justify-between px-3.5 min-h-[44px] text-slate-100 hover:bg-white/[0.04] transition">
+                  <div
+                    className={`w-full flex items-center min-h-[44px] transition ${
+                      folderActive ? 'bg-[#0A84FF] text-white' : 'text-slate-100 hover:bg-white/[0.04]'
+                    }`}
+                  >
                     <button
+                      type="button"
                       onClick={() => toggleFolder(folderName)}
-                      className="flex items-center gap-3 truncate flex-1 text-left"
+                      aria-expanded={!isCollapsed}
+                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${folderName}`}
+                      className={`pl-3 pr-1.5 min-h-[44px] flex items-center shrink-0 transition ${
+                        folderActive ? 'text-white/90 hover:text-white' : 'text-[#8E8E93] hover:text-white'
+                      }`}
                     >
                       {isCollapsed ? (
-                        <ChevronRight className="w-4 h-4 text-[#8E8E93] stroke-[1.5] shrink-0" />
+                        <ChevronRight className="w-4 h-4 stroke-[1.5]" />
                       ) : (
-                        <ChevronDown className="w-4 h-4 text-[#8E8E93] stroke-[1.5] shrink-0" />
+                        <ChevronDown className="w-4 h-4 stroke-[1.5]" />
                       )}
-                      <FolderOpen className="w-4 h-4 text-[#0A84FF] stroke-[1.5] shrink-0" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSelectFilter({ type: 'folder', id: folderName, title: folderName })}
+                      className="flex items-center gap-2.5 truncate flex-1 min-h-[44px] pr-2 text-left"
+                    >
+                      <FolderOpen className={`w-4 h-4 stroke-[1.5] shrink-0 ${folderActive ? 'text-white' : 'text-[#0A84FF]'}`} />
                       <span className="font-semibold truncate">{folderName}</span>
                     </button>
-                    <span className="text-xs text-[#8E8E93] font-normal pl-2">
+                    <span className={`text-xs font-normal pr-3.5 pl-1 shrink-0 ${folderActive ? 'text-white/80' : 'text-[#8E8E93]'}`}>
                       {folderUnread > 0 ? folderUnread : ''}
                     </span>
                   </div>

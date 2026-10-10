@@ -544,7 +544,7 @@ export default function App() {
           return targetFeed ? article.feedUrl === targetFeed.url : true;
         }
         case 'folder': {
-          const folderFeeds = feeds.filter((f) => f.folder === activeFilter.id);
+          const folderFeeds = feeds.filter((f) => (f.folder || 'Feeds') === activeFilter.id);
           const urls = new Set(folderFeeds.map((f) => f.url));
           return urls.has(article.feedUrl);
         }
