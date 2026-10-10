@@ -1,0 +1,288 @@
+@import "tailwindcss";
+
+/* iOS Safe Area & Mobile Ergonomics */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --bottom-bar-height: 68px;
+}
+
+/* Safe area padding utilities */
+.ios-header-safe {
+  padding-top: max(44px, env(safe-area-inset-top, 44px));
+  padding-left: max(14px, env(safe-area-inset-left, 14px));
+  padding-right: max(14px, env(safe-area-inset-right, 14px));
+}
+
+@media (min-width: 768px) {
+  .ios-header-safe {
+    padding-top: 14px;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
+
+.ios-footer-safe {
+  padding-bottom: calc(76px + max(16px, env(safe-area-inset-bottom, 16px)));
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+
+.ios-safe-top {
+  padding-top: max(14px, env(safe-area-inset-top, 0px));
+}
+
+.ios-safe-bottom {
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 16px));
+}
+
+/* Main scroll container bottom clearance accounting for bottom navigation bar and home indicator */
+.main-scroll-clearance {
+  padding-bottom: calc(84px + max(16px, env(safe-area-inset-bottom, 16px))) !important;
+}
+
+/* Touch callouts and tap highlights for crisp iOS feel */
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Smooth Transitions & Screen Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes zoomIn95 {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideInFromBottom2 {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromBottom4 {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromBottom5 {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInFromTop2 {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes contentCrossfade {
+  0% {
+    opacity: 0.15;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes listCrossfade {
+  0% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Reusable animation utilities */
+.animate-in {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation-name: fadeIn;
+}
+
+.zoom-in-95 {
+  animation-name: zoomIn95;
+}
+
+.slide-in-from-bottom-2 {
+  animation-name: slideInFromBottom2;
+}
+
+.slide-in-from-bottom-4 {
+  animation-name: slideInFromBottom4;
+}
+
+.slide-in-from-bottom-5 {
+  animation-name: slideInFromBottom5;
+}
+
+.slide-in-from-top-2 {
+  animation-name: slideInFromTop2;
+}
+
+.animate-content-fade {
+  animation: contentCrossfade 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-list-fade {
+  animation: listCrossfade 170ms ease-out both;
+}
+
+.duration-150 {
+  animation-duration: 150ms;
+}
+
+.duration-200 {
+  animation-duration: 200ms;
+}
+
+.duration-300 {
+  animation-duration: 300ms;
+}
+
+/* Respect reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  .animate-content-fade,
+  .animate-list-fade,
+  .fade-in,
+  .zoom-in-95,
+  .slide-in-from-bottom-2,
+  .slide-in-from-bottom-4,
+  .slide-in-from-bottom-5,
+  .slide-in-from-top-2 {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.smooth-scroll {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* NetNewsWire Reader Typography Rules - Bulletproof Text Scaling */
+.reader-size-sm {
+  --reader-fs: 14px;
+}
+.reader-size-base {
+  --reader-fs: 16px;
+}
+.reader-size-lg {
+  --reader-fs: 19px;
+}
+.reader-size-xl {
+  --reader-fs: 23px;
+}
+
+.reader-leading-normal {
+  --reader-lh: 1.5;
+}
+.reader-leading-relaxed {
+  --reader-lh: 1.75;
+}
+.reader-leading-loose {
+  --reader-lh: 2.05;
+}
+
+/* Enforce font size and line height across all article body text elements */
+.article-reader-content,
+.article-reader-content p,
+.article-reader-content span,
+.article-reader-content div:not([class*="code"]):not([class*="pre"]):not([class*="highlight"]):not([class*="syntax"]):not([class*="gist"]):not([class*="snippet"]),
+.article-reader-content li,
+.article-reader-content td,
+.article-reader-content th,
+.article-reader-content a,
+.article-reader-content font,
+.article-reader-content em,
+.article-reader-content strong,
+.article-reader-content b,
+.article-reader-content i,
+.article-reader-content blockquote p {
+  font-size: var(--reader-fs, 16px) !important;
+  line-height: var(--reader-lh, 1.7) !important;
+}
+
+/* Proportional heading scaling */
+.article-reader-content h1 {
+  font-size: calc(var(--reader-fs, 16px) * 1.55) !important;
+  line-height: 1.25 !important;
+}
+.article-reader-content h2 {
+  font-size: calc(var(--reader-fs, 16px) * 1.35) !important;
+  line-height: 1.3 !important;
+}
+.article-reader-content h3 {
+  font-size: calc(var(--reader-fs, 16px) * 1.18) !important;
+  line-height: 1.35 !important;
+}
+.article-reader-content h4,
+.article-reader-content h5,
+.article-reader-content h6 {
+  font-size: var(--reader-fs, 16px) !important;
+  line-height: 1.4 !important;
+}

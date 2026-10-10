@@ -1,0 +1,6 @@
+{
+  "summary":  "Revised UX implementation plan specifically optimized for iPhone 13 / mobile touch screen. Demotes desktop keyboard shortcuts to secondary passive listeners (no intrusive UI). Prioritizes one-handed mobile ergonomics: thumb-zone bottom navigation and action bar, iOS safe-area padding (pb-safe), 44px touch targets, Reader mode ergonomics (reading time, margins, font sizing), smooth edge-swipe gestures, and haptic feedback.",
+  "updatedAt":  "2026-10-09T19:00:37.782513900Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

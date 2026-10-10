@@ -1,0 +1,7 @@
+{
+  "name": "NetNewsWire Remix & iOS Architecture Guide",
+  "description": "Feasibility analysis, cost breakdown, and personal deployment plan for cloning and remixing NetNewsWire on iOS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

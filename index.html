@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      // Suppress and intercept Vite WebSocket HMR disconnects in iframe development environment
+      (function() {
+        var OriginalWebSocket = window.WebSocket;
+        if (OriginalWebSocket) {
+          window.WebSocket = function(url, protocols) {
+            var urlStr = String(url || '');
+            if (
+              urlStr.indexOf('vite') !== -1 ||
+              urlStr.indexOf('/@vite') !== -1 ||
+              urlStr.indexOf('ws:') !== -1 ||
+              urlStr.indexOf('wss:') !== -1
+            ) {
+              var listeners = {};
+              return {
+                readyState: 1, // WebSocket.OPEN
+                send: function() {},
+                close: function() {},
+                addEventListener: function(type, cb) {
+                  listeners[type] = listeners[type] || [];
+                  listeners[type].push(cb);
+                  if (type === 'open') {
+                    setTimeout(function() { try { cb({}); } catch (e) {} }, 0);
+                  }
+                },
+                removeEventListener: function(type, cb) {
+                  if (listeners[type]) {
+                    listeners[type] = listeners[type].filter(function(fn) { return fn !== cb; });
+                  }
+                }
+              };
+            }
+            return new OriginalWebSocket(url, protocols);
+          };
+          window.WebSocket.prototype = OriginalWebSocket.prototype;
+          window.WebSocket.CONNECTING = 0;
+          window.WebSocket.OPEN = 1;
+          window.WebSocket.CLOSING = 2;
+          window.WebSocket.CLOSED = 3;
+        }
+
+        window.addEventListener('unhandledrejection', function(event) {
+          var reason = event && (event.reason ? event.reason.message || String(event.reason) : '');
+          if (
+            reason && (
+              reason.indexOf('WebSocket') !== -1 ||
+              reason.indexOf('vite') !== -1 ||
+              reason.indexOf('ws:') !== -1 ||
+              reason.indexOf('closed without opened') !== -1
+            )
+          ) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+
+        window.addEventListener('error', function(event) {
+          var msg = event && (event.message || '');
+          if (
+            msg && (
+              msg.indexOf('WebSocket') !== -1 ||
+              msg.indexOf('vite') !== -1 ||
+              msg.indexOf('closed without opened') !== -1
+            )
+          ) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>NetNewsWire Remix & iOS Architecture Guide</title>
+    <meta name="description" content="Feasibility analysis, cost breakdown, and personal deployment plan for cloning and remixing NetNewsWire on iOS." />
+    <meta property="og:title" content="NetNewsWire Remix & iOS Architecture Guide" />
+    <meta property="og:description" content="Feasibility analysis, cost breakdown, and personal deployment plan for cloning and remixing NetNewsWire on iOS." />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="RSSNewsFeeds" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="manifest" href="/manifest.json" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
