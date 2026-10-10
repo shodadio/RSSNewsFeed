@@ -27,7 +27,6 @@ import {
 import { Feed, SmartFilter, AIBriefing } from '../types';
 import { PWAInstallGuide } from './PWAInstallGuide';
 import { AIBriefCard } from './AIBriefCard';
-import { triggerHaptic } from '../utils/haptics';
 import { formatTag, isMetaTag } from '../utils/tagUtils';
 import { useLongPressReorder } from '../hooks/useLongPressReorder';
 
@@ -133,7 +132,6 @@ const FolderFeedsReorderList: React.FC<FolderFeedsReorderListProps> = ({
             <button
               onClick={() => {
                 if (!isDragging) {
-                  triggerHaptic('selection');
                   onSelectFilter({ type: 'feed', id: feed.id, title: feed.title });
                 }
               }}
@@ -203,7 +201,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const startFeedLongPress = (feed: Feed) => {
     feedLongPressTimer.current = setTimeout(() => {
-      triggerHaptic('heavy');
       setFeedActionTarget(feed);
     }, 450);
   };
@@ -279,7 +276,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <PWAInstallGuide />
             <button
               onClick={() => {
-                triggerHaptic('medium');
                 onRefreshAll();
               }}
               disabled={isRefreshing}
@@ -318,7 +314,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Today */}
             <button
               onClick={() => {
-                triggerHaptic('selection');
                 onSelectFilter({ type: 'today', title: 'Today' });
               }}
               className={`w-full flex items-center justify-between px-3.5 min-h-[44px] transition text-left ${
@@ -337,7 +332,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* All Unread */}
             <button
               onClick={() => {
-                triggerHaptic('selection');
                 onSelectFilter({ type: 'unread', title: 'All Unread' });
               }}
               className={`w-full flex items-center justify-between px-3.5 min-h-[44px] transition text-left ${
@@ -356,7 +350,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Starred */}
             <button
               onClick={() => {
-                triggerHaptic('selection');
                 onSelectFilter({ type: 'starred', title: 'Starred' });
               }}
               className={`w-full flex items-center justify-between px-3.5 min-h-[44px] transition text-left ${
@@ -375,7 +368,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Archive */}
             <button
               onClick={() => {
-                triggerHaptic('selection');
                 onSelectFilter({ type: 'archive', title: 'Archive' });
               }}
               className={`w-full flex items-center justify-between px-3.5 min-h-[44px] transition text-left ${
@@ -469,7 +461,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     key={tag}
                     onClick={() => {
-                      triggerHaptic('selection');
                       onSelectFilter({ type: 'tag', id: tag, title: tag });
                     }}
                     className={`px-3 py-1 rounded-md text-xs transition flex items-center gap-1.5 ${
@@ -506,7 +497,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           onClick={() => {
-            triggerHaptic('medium');
             onOpenAddFeed();
           }}
           className="w-12 h-12 rounded-full bg-[#0A84FF] text-white flex items-center justify-center shadow-2xl active:scale-95 transition"

@@ -5,7 +5,6 @@
 
 import React, { useState } from 'react';
 import { Lock, ShieldCheck, KeyRound, AlertCircle, ArrowRight, X } from 'lucide-react';
-import { triggerHaptic } from '../utils/haptics';
 
 interface AuthModalProps {
   onAuthenticated: (token: string, email: string) => void;
@@ -28,7 +27,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const activePin = pinToSubmit || pin;
     if (!activePin) {
       setError('Please enter your personal passcode.');
-      triggerHaptic('warning');
       return;
     }
 
@@ -44,19 +42,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       const data = await res.json();
       if (res.ok && data.success) {
-        triggerHaptic('success');
         if (remember) {
           localStorage.setItem('nnw_session_token', data.token);
           localStorage.setItem('nnw_user_email', data.user.email);
         }
         onAuthenticated(data.token, data.user.email);
       } else {
-        triggerHaptic('error');
         setError(data.message || 'Incorrect PIN. Default is 1984.');
         setPin('');
       }
     } catch {
-      triggerHaptic('error');
       setError('Could not reach backend authentication service.');
     } finally {
       setLoading(false);
@@ -64,7 +59,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   const handleKeypadPress = (digit: string) => {
-    triggerHaptic('selection');
     if (pin.length < 6) {
       const nextPin = pin + digit;
       setPin(nextPin);
@@ -78,7 +72,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   const handleClear = () => {
-    triggerHaptic('light');
     setPin('');
     setError(null);
   };
@@ -89,7 +82,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {isDismissible && onClose && (
           <button
             onClick={() => {
-              triggerHaptic('light');
               onClose();
             }}
             className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-full bg-slate-800/60 hover:bg-slate-800 transition"

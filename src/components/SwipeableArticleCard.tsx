@@ -17,7 +17,6 @@ import {
   Pencil
 } from 'lucide-react';
 import { Article } from '../types';
-import { triggerHaptic } from '../utils/haptics';
 import { formatTag, isMetaTag } from '../utils/tagUtils';
 
 interface SwipeableArticleCardProps {
@@ -104,7 +103,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
 
     longPressTimerRef.current = setTimeout(() => {
       if (!hasMovedRef.current) {
-        triggerHaptic('heavy');
         setShowLongPressSheet(true);
         isDraggingRef.current = false;
       }
@@ -151,7 +149,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
     isDraggingRef.current = false;
 
     if (offsetX < -ACTION_TRAY_WIDTH - 20) {
-      triggerHaptic('error');
       setOffsetX(0);
       setIsOpen(false);
       onDelete(article.id);
@@ -159,7 +156,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
     }
 
     if (offsetX < -60) {
-      triggerHaptic('light');
       setOffsetX(-ACTION_TRAY_WIDTH);
       setIsOpen(true);
     } else {
@@ -171,12 +167,10 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
   const handleClickCard = () => {
     if (hasMovedRef.current) return;
     if (isOpen) {
-      triggerHaptic('light');
       setOffsetX(0);
       setIsOpen(false);
       return;
     }
-    triggerHaptic('selection');
     onSelect();
   };
 
@@ -384,7 +378,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   onDelete(article.id);
                 }}
@@ -402,7 +395,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   setIsEditing(true);
                 }}
@@ -420,7 +412,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   if (isArchived && onUnarchive) {
                     onUnarchive(article.id);
@@ -442,7 +433,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={(e) => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   onToggleStar(article.id, e);
                 }}
@@ -460,7 +450,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   onToggleRead(article.id);
                 }}
@@ -572,7 +561,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   if (onUpdateArticle) {
                     onUpdateArticle({
                       ...article,

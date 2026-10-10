@@ -19,21 +19,10 @@ import {
   CheckCircle2,
   Smartphone,
   Cloud,
-  Zap,
-  Volume2,
   Lock,
-  Unlock,
-  Radio
+  Unlock
 } from 'lucide-react';
 import { Feed } from '../types';
-import {
-  triggerHaptic,
-  getHapticsInfo,
-  setHapticsEnabled as setHapticsStorage,
-  isAudioTactileEnabled,
-  setAudioTactileEnabled,
-  HapticType
-} from '../utils/haptics';
 import { getStorageMode, setStorageMode, saveLocalFeeds } from '../utils/storage';
 import { getAuthHeaders } from '../utils/api';
 
@@ -85,7 +74,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleToggleAuthRequired = async () => {
     setTogglingAuth(true);
-    triggerHaptic('medium');
     const next = !authRequired;
     try {
       const res = await fetch('/api/auth/toggle-required', {
@@ -95,21 +83,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
       if (res.ok) {
         setAuthRequired(next);
-        triggerHaptic('success');
-      } else {
-        triggerHaptic('error');
       }
     } catch {
-      triggerHaptic('error');
+      // Network/API failure: leave the current setting unchanged.
     } finally {
       setTogglingAuth(false);
     }
   };
 
-  const hapticsInfo = getHapticsInfo();
-
   const handleStorageModeChange = (mode: 'iphone' | 'icloud') => {
-    triggerHaptic();
     setStorageModeState(mode);
     setStorageMode(mode);
     saveLocalFeeds(feeds);

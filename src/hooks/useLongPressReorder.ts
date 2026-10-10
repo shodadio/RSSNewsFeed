@@ -4,7 +4,6 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { triggerHaptic } from '../utils/haptics';
 
 interface UseLongPressReorderOptions<T> {
   items: T[];
@@ -79,7 +78,6 @@ export function useLongPressReorder<T>({
 
         if (bestIndex !== overIndexRef.current) {
           setOverIndex(bestIndex);
-          triggerHaptic('selection');
         }
       }
     }
@@ -116,7 +114,6 @@ export function useLongPressReorder<T>({
           setDraggedHeight(rect.height || 48);
         }
 
-        triggerHaptic('medium');
         setIsDragging(true);
         setDraggedIndex(index);
         setOverIndex(index);
@@ -182,7 +179,6 @@ export function useLongPressReorder<T>({
 
         if (bestIndex !== overIndexRef.current) {
           setOverIndex(bestIndex);
-          triggerHaptic('selection');
         }
       }
 
@@ -232,10 +228,7 @@ export function useLongPressReorder<T>({
       const updated = [...items];
       const [removed] = updated.splice(fromIdx, 1);
       updated.splice(toIdx, 0, removed);
-      triggerHaptic('success');
       onReorder(updated);
-    } else {
-      triggerHaptic('light');
     }
 
     setIsDragging(false);

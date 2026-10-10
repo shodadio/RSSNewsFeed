@@ -7,7 +7,6 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { usePWAInstall } from './usePWAInstall';
 import { Smartphone, Download, X, Share, PlusSquare } from 'lucide-react';
-import { triggerHaptic } from '../utils/haptics';
 
 export const PWAInstallGuide: React.FC = () => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
@@ -19,12 +18,10 @@ export const PWAInstallGuide: React.FC = () => {
   }
 
   const handleOpenModal = () => {
-    triggerHaptic('light');
     setShowIOSModal(true);
   };
 
   const handleCloseModal = () => {
-    triggerHaptic('light');
     setShowIOSModal(false);
   };
 
@@ -90,7 +87,6 @@ export const PWAInstallGuide: React.FC = () => {
         <button
           type="button"
           onClick={() => {
-            triggerHaptic('medium');
             setShowIOSModal(false);
           }}
           className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 font-bold text-xs tracking-wide shadow-lg shadow-amber-500/10 transition flex items-center justify-center gap-1.5 shrink-0"

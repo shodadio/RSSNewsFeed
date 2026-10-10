@@ -28,7 +28,6 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Article, ScrapedArticle } from '../types';
-import { triggerHaptic } from '../utils/haptics';
 import { getAuthHeaders, notifySessionExpired } from '../utils/api';
 import { AuthModal } from './AuthModal';
 import { MobileReaderBar } from './MobileReaderBar';
@@ -73,7 +72,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
   });
 
   const handleDecreaseFontSize = () => {
-    triggerHaptic('light');
     setFontSize(prev => {
       const next = prev === 'xl' ? 'lg' : prev === 'lg' ? 'base' : prev === 'base' ? 'sm' : 'sm';
       localStorage.setItem('nnw_font_size', next);
@@ -82,7 +80,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
   };
 
   const handleIncreaseFontSize = () => {
-    triggerHaptic('light');
     setFontSize(prev => {
       const next = prev === 'sm' ? 'base' : prev === 'base' ? 'lg' : prev === 'lg' ? 'xl' : 'xl';
       localStorage.setItem('nnw_font_size', next);
@@ -412,7 +409,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
 
   const handleSummarizeArticle = async () => {
     if (!article) return;
-    triggerHaptic();
 
     // If summary is already cached, toggle visibility
     if (summariesCache[article.id]) {
@@ -453,7 +449,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
         [article.id]: data.summary
       }));
       setShowSummary(true);
-      triggerHaptic('success');
     } catch (err: any) {
       const msg = err.message || 'Failed to generate 1-sentence summary with Gemini.';
       if (
@@ -464,7 +459,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
         setIsAuthError(true);
       }
       setSummaryError(msg);
-      triggerHaptic('error');
     } finally {
       setIsSummarizing(false);
     }
@@ -474,7 +468,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
     if (!currentSummary) return;
     navigator.clipboard.writeText(currentSummary);
     setHasCopiedSummary(true);
-    triggerHaptic();
     setTimeout(() => setHasCopiedSummary(false), 2000);
   };
 
@@ -635,7 +628,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
           {/* Star Button */}
           <button
             onClick={() => {
-              triggerHaptic(isStarred ? 'light' : 'success');
               onToggleStar();
             }}
             className={`p-2 rounded-lg transition ${
@@ -651,7 +643,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
           {/* Read / Unread Toggle */}
           <button
             onClick={() => {
-              triggerHaptic('selection');
               onToggleRead();
             }}
             className={`p-2 rounded-lg transition ${
@@ -665,7 +656,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
           {/* Share */}
           <button
             onClick={() => {
-              triggerHaptic('light');
               handleShare();
             }}
             className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
@@ -776,7 +766,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
                     {isAuthError ? (
                       <button
                         onClick={() => {
-                          triggerHaptic('medium');
                           if (onOpenAuth) {
                             onOpenAuth();
                           } else {
@@ -791,7 +780,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
                     ) : (
                       <button
                         onClick={() => {
-                          triggerHaptic('light');
                           handleSummarizeArticle();
                         }}
                         className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 rounded-lg text-xs font-medium transition"

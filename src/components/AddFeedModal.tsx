@@ -23,7 +23,6 @@ import {
 import { Feed } from '../types';
 import { suggestCategoriesAndTags } from '../utils/categorySuggester';
 import { getAuthHeaders } from '../utils/api';
-import { triggerHaptic } from '../utils/haptics';
 
 interface AddFeedModalProps {
   isOpen: boolean;
@@ -133,7 +132,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
   };
 
   const handleApplyCategory = (cat: string) => {
-    triggerHaptic('selection');
     setFolder(cat);
     setNewFolderName('');
   };
@@ -142,7 +140,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
     e.preventDefault();
     if (!aiQuery.trim()) return;
 
-    triggerHaptic('light');
     setAiSearching(true);
     setAiError(null);
     setAiNotice(null);
@@ -158,21 +155,17 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
         if (data.notice) {
           setAiNotice(data.notice);
         }
-        triggerHaptic('success');
       } else {
         setAiError(data.error || 'Failed to search feeds with AI.');
-        triggerHaptic('error');
       }
     } catch {
       setAiError('Network error searching feeds.');
-      triggerHaptic('error');
     } finally {
       setAiSearching(false);
     }
   };
 
   const handleSelectAiFeed = (feed: { title: string; url: string; folder: string }) => {
-    triggerHaptic('selection');
     setUrl(feed.url);
     setTitle(feed.title);
     setFolder(feed.folder);
@@ -181,7 +174,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
 
   // Add a single recommended feed directly
   const handleAddSingleRecommended = (item: RecommendedFeedItem) => {
-    triggerHaptic('success');
     const newFeed: Feed = {
       id: `feed-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       title: item.title,
@@ -204,7 +196,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
     );
     if (unadded.length === 0) return;
 
-    triggerHaptic('heavy');
     const newFeeds: Feed[] = unadded.map((item, idx) => {
       let domain = '';
       try {
@@ -243,13 +234,11 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
     if (e) e.preventDefault();
     if (!url.trim()) {
       setError('Please provide an RSS feed or Substack link.');
-      triggerHaptic('warning');
       return;
     }
 
     setLoading(true);
     setError(null);
-    triggerHaptic('light');
 
     try {
       const res = await fetch('/api/feeds/fetch', {
@@ -291,7 +280,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
         lastFetched: new Date().toISOString()
       };
 
-      triggerHaptic('success');
       onFeedAdded(newFeed);
       setUrl('');
       setTitle('');
@@ -300,7 +288,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
       setSelectedTags([]);
       onClose();
     } catch (err: any) {
-      triggerHaptic('error');
       setError(err.message || 'Failed to fetch and parse feed.');
     } finally {
       setLoading(false);
@@ -308,7 +295,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
   };
 
   const handleSelectSuggestion = (s: typeof POPULAR_SUGGESTIONS[0]) => {
-    triggerHaptic('selection');
     setUrl(s.url);
     setTitle(s.title);
     setFolder(s.folder);
@@ -323,7 +309,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
       <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 p-5 sm:p-6 shadow-2xl relative text-slate-100 max-h-[90dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
         <button
           onClick={() => {
-            triggerHaptic('light');
             onClose();
           }}
           className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg transition"
@@ -345,7 +330,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
           <button
             type="button"
             onClick={() => {
-              triggerHaptic('selection');
               setMode('url');
             }}
             className={`h-9 flex items-center justify-center gap-1.5 px-2 rounded-lg text-xs font-semibold transition text-center truncate ${
@@ -360,7 +344,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
           <button
             type="button"
             onClick={() => {
-              triggerHaptic('selection');
               setMode('recommended');
               if (recommendedFeeds.length === 0) fetchRecommendedFeeds();
             }}
@@ -376,7 +359,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
           <button
             type="button"
             onClick={() => {
-              triggerHaptic('selection');
               setMode('ai');
             }}
             className={`h-9 flex items-center justify-center gap-1.5 px-2 rounded-lg text-xs font-semibold transition text-center truncate ${
@@ -412,7 +394,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic('light');
                   fetchRecommendedFeeds();
                 }}
                 disabled={isFetchingRecommended}
@@ -542,7 +523,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic('light');
                   onClose();
                 }}
                 className="h-9 px-4 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition inline-flex items-center justify-center"
@@ -631,7 +611,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic('light');
                   onClose();
                 }}
                 className="h-9 px-4 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition inline-flex items-center justify-center"
@@ -657,7 +636,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic('medium');
                   setMode('recommended');
                   if (recommendedFeeds.length === 0) fetchRecommendedFeeds();
                 }}
@@ -836,7 +814,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic('light');
                   onClose();
                 }}
                 className="h-10 px-4 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition inline-flex items-center justify-center"

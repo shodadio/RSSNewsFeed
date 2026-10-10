@@ -14,7 +14,6 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { AIBriefing } from '../types';
-import { triggerHaptic } from '../utils/haptics';
 
 interface AIBriefCardProps {
   briefing: AIBriefing | null;
@@ -80,7 +79,6 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({
       >
         <button
           onClick={() => {
-            triggerHaptic('medium');
             onGenerate();
           }}
           disabled={unreadCount === 0}
@@ -144,7 +142,6 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              triggerHaptic('medium');
               onGenerate();
             }}
             className="p-1.5 text-[#8E8E93] hover:text-white hover:bg-white/[0.08] rounded-lg transition"
@@ -156,7 +153,6 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({
           {/* Collapse / Expand Toggle */}
           <button
             onClick={() => {
-              triggerHaptic('selection');
               onToggleCollapse();
             }}
             className="p-1.5 text-[#8E8E93] hover:text-white hover:bg-white/[0.08] rounded-lg transition"
@@ -173,7 +169,6 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({
           {/* Dismiss */}
           <button
             onClick={() => {
-              triggerHaptic('light');
               onDismiss();
             }}
             className="p-1.5 text-[#8E8E93] hover:text-rose-400 hover:bg-white/[0.08] rounded-lg transition"
@@ -240,7 +235,6 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({
           <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between text-[11px] text-[#8E8E93]">
             <button
               onClick={() => {
-                triggerHaptic('selection');
                 onToggleCollapse();
               }}
               className="text-[#0A84FF] hover:underline font-semibold"
@@ -249,7 +243,6 @@ export const AIBriefCard: React.FC<AIBriefCardProps> = ({
             </button>
             <button
               onClick={() => {
-                triggerHaptic('light');
                 onDismiss();
               }}
               className="text-[#8E8E93] hover:text-white transition"

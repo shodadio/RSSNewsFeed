@@ -713,61 +713,6 @@ export default function App() {
     }
   };
 
-  // Keyboard navigation shortcuts (passive background listeners)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Do not capture if typing in input or textarea
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) {
-        return;
-      }
-
-      if (displayedArticles.length === 0) return;
-
-      const currentIndex = displayedArticles.findIndex((a) => a.id === selectedArticleId);
-
-      // 'j' or ArrowDown: Next article
-      if (e.key === 'j' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        const nextIndex = currentIndex < displayedArticles.length - 1 ? currentIndex + 1 : 0;
-        handleSelectArticle(displayedArticles[nextIndex]);
-      }
-      // 'k' or ArrowUp: Previous article
-      else if (e.key === 'k' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        const prevIndex = currentIndex > 0 ? currentIndex - 1 : displayedArticles.length - 1;
-        handleSelectArticle(displayedArticles[prevIndex]);
-      }
-      // 'e': Archive current article
-      else if (e.key === 'e' && selectedArticleId) {
-        e.preventDefault();
-        handleArchiveArticle(selectedArticleId);
-      }
-      // 'm': Toggle read/unread
-      else if (e.key === 'm' && selectedArticleId) {
-        e.preventDefault();
-        handleToggleRead(selectedArticleId);
-      }
-      // 's': Toggle star
-      else if (e.key === 's' && selectedArticleId) {
-        e.preventDefault();
-        handleToggleStar(selectedArticleId);
-      }
-      // 'u' or 'r': Refresh
-      else if (e.key === 'u' || e.key === 'r') {
-        e.preventDefault();
-        refreshAllFeeds();
-      }
-      // 'o': Open original
-      else if (e.key === 'o' && selectedArticle) {
-        e.preventDefault();
-        window.open(selectedArticle.link, '_blank');
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [displayedArticles, selectedArticleId, selectedArticle, handleToggleRead, handleToggleStar, handleArchiveArticle, refreshAllFeeds]);
-
   // Folder and badge counts
   const unreadCountByFeed = useMemo(() => {
     const counts: Record<string, number> = {};

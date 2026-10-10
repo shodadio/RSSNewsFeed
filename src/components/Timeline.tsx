@@ -17,7 +17,6 @@ import {
 import { Article, SmartFilter, Feed, AIBriefing } from '../types';
 import { SwipeableArticleCard } from './SwipeableArticleCard';
 import { AIBriefCard } from './AIBriefCard';
-import { triggerHaptic } from '../utils/haptics';
 import { useLongPressReorder } from '../hooks/useLongPressReorder';
 
 interface TimelineProps {
@@ -87,7 +86,6 @@ export const Timeline: React.FC<TimelineProps> = ({
   const [isPulling, setIsPulling] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pullStartYRef = useRef(0);
-  const hasTriggeredHapticRef = useRef(false);
 
   const PULL_THRESHOLD = 64; // Distance in px to trigger refresh
   const MAX_PULL = 96;
@@ -96,7 +94,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     if (scrollContainerRef.current && scrollContainerRef.current.scrollTop <= 0) {
       pullStartYRef.current = e.touches[0].clientY;
       setIsPulling(true);
-      hasTriggeredHapticRef.current = false;
     } else {
       setIsPulling(false);
     }
@@ -116,12 +113,6 @@ export const Timeline: React.FC<TimelineProps> = ({
       const damped = Math.min(MAX_PULL, deltaY * 0.45);
       setPullDistance(damped);
 
-      if (damped >= PULL_THRESHOLD && !hasTriggeredHapticRef.current) {
-        hasTriggeredHapticRef.current = true;
-        triggerHaptic('medium');
-      } else if (damped < PULL_THRESHOLD && hasTriggeredHapticRef.current) {
-        hasTriggeredHapticRef.current = false;
-      }
     } else {
       if (pullDistance > 0) setPullDistance(0);
     }
@@ -132,7 +123,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     setIsPulling(false);
 
     if (pullDistance >= PULL_THRESHOLD && onRefreshAll && !isRefreshing) {
-      triggerHaptic('success');
       onRefreshAll();
     }
     setPullDistance(0);
@@ -237,7 +227,6 @@ export const Timeline: React.FC<TimelineProps> = ({
             {onGenerateBriefing && (
               <button
                 onClick={() => {
-                  triggerHaptic('medium');
                   onGenerateBriefing();
                 }}
                 disabled={isGeneratingBriefing}
@@ -266,7 +255,6 @@ export const Timeline: React.FC<TimelineProps> = ({
 
             <button
               onClick={() => {
-                triggerHaptic('medium');
                 onMarkAllAsRead();
               }}
               className="p-2 text-[#8E8E93] hover:text-white hover:bg-white/[0.08] rounded-xl transition"
@@ -394,7 +382,6 @@ export const Timeline: React.FC<TimelineProps> = ({
               {activeFilter.type !== 'all' && onSelectFilter && (
                 <button
                   onClick={() => {
-                    triggerHaptic('light');
                     onSelectFilter({ type: 'all', title: 'All Articles' });
                   }}
                   className="px-3.5 py-2 min-h-[44px] bg-[#0A84FF] hover:bg-[#0A84FF]/90 active:bg-[#0A84FF]/80 text-white text-xs font-bold rounded-xl transition shadow-lg shadow-[#0A84FF]/20 active:scale-95 flex items-center justify-center"
@@ -406,7 +393,6 @@ export const Timeline: React.FC<TimelineProps> = ({
               {onRefreshAll && (
                 <button
                   onClick={() => {
-                    triggerHaptic('light');
                     onRefreshAll();
                   }}
                   disabled={isRefreshing}
