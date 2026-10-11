@@ -94,7 +94,7 @@ This project includes SSRF protection and URL validation for external feed and a
 
 ## Notes
 
-This repository appears to be a personal RSS reading and feed-curation app based on the NetNewsWire model, with AI-assisted discovery and summarization layers layered on top of a lightweight custom backend.
+This repository is a personal RSS reading and feed-curation app based on the NetNewsWire model, with AI-assisted discovery and summarization layers layered on top of a lightweight custom backend.
 
 ## License
 
