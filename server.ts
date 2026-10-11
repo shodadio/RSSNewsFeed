@@ -7,6 +7,7 @@
 // so AI Studio / Cloud Run env injection still works unchanged.
 import 'dotenv/config';
 
+import crypto from 'crypto';
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -260,6 +261,98 @@ async function safeFetch(url: string, init?: RequestInit, maxRedirects = 5): Pro
   throw new Error('Too many redirects while fetching URL');
 }
 
+// ======================== SHARED PASSPHRASE ========================
+// One passphrase for the whole app, read from the environment
+// (APP_PASSPHRASE). It is never written to the store file, never committed and
+// never sent to the browser — the previous implementation stored a plaintext PIN
+// in data/store.json, which is exactly how it ended up published.
+//
+// Sessions are stateless signed cookies rather than rows in a token list, so
+// nothing accumulates server-side, and because the signing key is derived from
+// the passphrase, changing it instantly invalidates every existing session.
+
+const SESSION_COOKIE = 'nnw_session';
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/** Hash of the configured passphrase, or null when the app is open. */
+function passphraseHash(): Buffer | null {
+  const secret = process.env.APP_PASSPHRASE;
+  if (!secret || !String(secret).trim()) return null;
+  return crypto.createHash('sha256').update(String(secret), 'utf8').digest();
+}
+
+export function isPassphraseRequired(): boolean {
+  return passphraseHash() !== null;
+}
+
+/** Signing key derived from the passphrase, so rotating it revokes all sessions. */
+function sessionSigningKey(): Buffer {
+  return crypto
+    .createHmac('sha256', passphraseHash() as Buffer)
+    .update('nnw-session-v1')
+    .digest();
+}
+
+/** `issuedAtMs.mac` — self-contained, no server-side session store. */
+function signSession(issuedAtMs: number): string {
+  const payload = String(issuedAtMs);
+  const mac = crypto.createHmac('sha256', sessionSigningKey()).update(payload).digest('base64url');
+  return `${payload}.${mac}`;
+}
+
+function verifySessionToken(token: string | undefined): boolean {
+  if (!isPassphraseRequired()) return true;
+  if (!token || typeof token !== 'string') return false;
+
+  const [payload, mac] = token.split('.');
+  if (!payload || !mac) return false;
+
+  const issuedAt = Number(payload);
+  if (!Number.isFinite(issuedAt) || issuedAt <= 0) return false;
+  if (Date.now() - issuedAt > SESSION_TTL_SECONDS * 1000) return false;
+
+  const expected = crypto.createHmac('sha256', sessionSigningKey()).update(payload).digest('base64url');
+  const provided = Buffer.from(mac);
+  const wanted = Buffer.from(expected);
+  if (provided.length !== wanted.length) return false;
+  return crypto.timingSafeEqual(provided, wanted);
+}
+
+function readCookie(req: Request, name: string): string | undefined {
+  const header = req.headers?.cookie;
+  if (!header) return undefined;
+  for (const part of String(header).split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) {
+      return decodeURIComponent(part.slice(idx + 1).trim());
+    }
+  }
+  return undefined;
+}
+
+function isHttpsRequest(req: Request): boolean {
+  if (req.secure) return true;
+  const proto = req.headers['x-forwarded-proto'];
+  return String(proto || '').split(',')[0].trim() === 'https';
+}
+
+/**
+ * Gate for private data and for anything that spends money (the Gemini calls).
+ * A no-op when no passphrase is configured, so local development stays open.
+ */
+export function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (!isPassphraseRequired() || verifySessionToken(readCookie(req, SESSION_COOKIE))) {
+    // Private responses must not sit in any intermediary cache.
+    res.setHeader('Cache-Control', 'no-store');
+    return next();
+  }
+  return res.status(401).json({
+    success: false,
+    error: 'Passphrase required.'
+  });
+}
+
 // ======================== API ROUTES ========================
 
 // Health check
@@ -267,14 +360,88 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', name: 'RSSNewsFeeds-Web', time: new Date().toISOString() });
 });
 
-// Passcode verification (compatibility shim).
-// The passcode gate is gone: this is a single-user reader and the PIN was only a
-// local convenience. This endpoint is kept so an already-installed copy of the app
-// (a cached service-worker bundle that still calls /api/auth/verify on startup)
-// unlocks itself normally instead of getting stuck on a login screen.
-app.get('/api/auth/verify', (_req: Request, res: Response) => {
-  res.json({ valid: true, authRequired: false });
+// ---- Passphrase endpoints ----
+// Health stays open so uptime checks work; every other API is gated above it.
+
+app.get('/api/auth/verify', (req: Request, res: Response) => {
+  const authRequired = isPassphraseRequired();
+  res.json({
+    valid: !authRequired || verifySessionToken(readCookie(req, SESSION_COOKIE)),
+    authRequired
+  });
 });
+
+app.post('/api/auth/login', (req: Request, res: Response) => {
+  if (!isPassphraseRequired()) {
+    return res.json({ success: true, authRequired: false });
+  }
+
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || req.ip || 'unknown';
+  if (isRateLimited(clientIp)) {
+    return res.status(429).json({
+      success: false,
+      message: 'Too many attempts. Please wait a minute before trying again.'
+    });
+  }
+
+  // Compare digests in constant time so the response gives nothing away.
+  const provided = crypto.createHash('sha256').update(String(req.body?.passphrase ?? ''), 'utf8').digest();
+  const expected = passphraseHash() as Buffer;
+
+  if (!crypto.timingSafeEqual(provided, expected)) {
+    recordFailedLogin(clientIp);
+    return res.status(401).json({ success: false, message: 'Incorrect passphrase.' });
+  }
+
+  resetFailedLogin(clientIp);
+  // HttpOnly: page scripts cannot read it. SameSite=Lax + Secure-on-HTTPS: it is
+  // not attached to cross-site requests.
+  res.cookie(SESSION_COOKIE, signSession(Date.now()), {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isHttpsRequest(req),
+    path: '/',
+    maxAge: SESSION_TTL_SECONDS * 1000
+  });
+  return res.json({ success: true });
+});
+
+app.post('/api/auth/logout', (_req: Request, res: Response) => {
+  res.clearCookie(SESSION_COOKIE, { path: '/' });
+  res.json({ success: true });
+});
+
+// Login throttling: the passphrase is shared and human-chosen, so the only
+// real defence against guessing is to make guessing slow.
+const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
+
+function isRateLimited(ip: string): boolean {
+  const record = loginAttempts.get(ip);
+  if (!record) return false;
+  if (Date.now() < record.lockedUntil) return true;
+  // A previous lockout has expired. Reset the counter but KEEP the entry:
+  // this runs before every attempt, so deleting it here would discard the
+  // failures recorded since the lockout and the limit would never be reached.
+  if (record.lockedUntil > 0) {
+    record.lockedUntil = 0;
+    record.count = 0;
+  }
+  return false;
+}
+
+function recordFailedLogin(ip: string) {
+  const record = loginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
+  record.count += 1;
+  if (record.count >= 5) {
+    record.lockedUntil = Date.now() + 60000;
+    record.count = 0;
+  }
+  loginAttempts.set(ip, record);
+}
+
+function resetFailedLogin(ip: string) {
+  loginAttempts.delete(ip);
+}
 
 // ======================== AUTHOR FEED CATEGORIES ========================
 // rss-parser surfaces per-item <category> elements and iTunes categories, but
@@ -564,7 +731,7 @@ async function discoverAndParseFeed(inputUrl: string) {
 }
 
 // Fetch Single or Batch RSS feeds
-app.post('/api/feeds/fetch', async (req: Request, res: Response) => {
+app.post('/api/feeds/fetch', requireAuth, async (req: Request, res: Response) => {
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: 'URL is required' });
@@ -753,7 +920,7 @@ function searchNetNewsWireCatalog(query: string) {
   ];
 }
 
-app.post('/api/ai/search-feeds', async (req: Request, res: Response) => {
+app.post('/api/ai/search-feeds', requireAuth, async (req: Request, res: Response) => {
   const { query } = req.body;
   if (!query) {
     return res.status(400).json({ error: 'Query is required' });
@@ -926,8 +1093,8 @@ Respond ONLY with a valid JSON array matching this format:
   });
 };
 
-app.get('/api/ai/recommended-tech-feeds', handleRecommendedTechFeeds);
-app.post('/api/ai/recommended-tech-feeds', handleRecommendedTechFeeds);
+app.get('/api/ai/recommended-tech-feeds', requireAuth, handleRecommendedTechFeeds);
+app.post('/api/ai/recommended-tech-feeds', requireAuth, handleRecommendedTechFeeds);
 
 // ======================== AI DAILY BRIEFING (MORNING DIGEST) ========================
 // One digest per day: a single paragraph, the day's recurring themes, and a ranked
@@ -1119,7 +1286,7 @@ function buildHeuristicParagraph(stories: BriefingCandidate[], total: number): s
 }
 
 // AI Briefing: synthesize the day's unread items into a Morning Digest
-app.post('/api/ai/briefing', async (req: Request, res: Response) => {
+app.post('/api/ai/briefing', requireAuth, async (req: Request, res: Response) => {
   const { articles } = req.body;
   if (!Array.isArray(articles) || articles.length === 0) {
     return res.status(400).json({ error: 'No unread articles provided to summarize.' });
@@ -1283,7 +1450,7 @@ Only use the supplied stories. Never invent stories, sources, facts or ids.`;
 });
 
 // Custom Article Scraper (Reader Mode / Full Extractor)
-app.post('/api/feeds/scrape-article', async (req: Request, res: Response) => {
+app.post('/api/feeds/scrape-article', requireAuth, async (req: Request, res: Response) => {
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: 'Article URL is required' });
@@ -1379,7 +1546,7 @@ app.post('/api/feeds/scrape-article', async (req: Request, res: Response) => {
 });
 
 // AI 1-Sentence Article Summarizer using Gemini API
-app.post('/api/articles/summarize', async (req: Request, res: Response) => {
+app.post('/api/articles/summarize', requireAuth, async (req: Request, res: Response) => {
   const { title, content, snippet, link } = req.body;
 
   if (!title && !content && !snippet) {
@@ -1445,7 +1612,7 @@ ${rawText.slice(0, 10000)}
 });
 
 // Storage GET & POST
-app.get('/api/storage', (_req: Request, res: Response) => {
+app.get('/api/storage', requireAuth, (_req: Request, res: Response) => {
   const store = readStore();
   res.json({
     feeds: store.feeds || [],
@@ -1457,7 +1624,7 @@ app.get('/api/storage', (_req: Request, res: Response) => {
   });
 });
 
-app.post('/api/storage', (req: Request, res: Response) => {
+app.post('/api/storage', requireAuth, (req: Request, res: Response) => {
   const { feeds, readArticleIds, starredArticleIds, archivedArticleIds, deletedArticleIds, deletedFeedUrls } = req.body;
   const store = readStore();
 
@@ -1473,7 +1640,7 @@ app.post('/api/storage', (req: Request, res: Response) => {
 });
 
 // Atomic Article Actions: delete, archive, unarchive, favorite, unfavorite
-app.post('/api/articles/action', (req: Request, res: Response) => {
+app.post('/api/articles/action', requireAuth, (req: Request, res: Response) => {
   const { action, articleId, articleIds } = req.body;
   const ids: string[] = Array.isArray(articleIds) ? articleIds : (articleId ? [articleId] : []);
   if (!action || ids.length === 0) {
@@ -1535,7 +1702,7 @@ function escapeXml(unsafe: string): string {
 }
 
 // OPML Import & Export
-app.post('/api/opml/import', async (req: Request, res: Response) => {
+app.post('/api/opml/import', requireAuth, async (req: Request, res: Response) => {
   const { opmlContent } = req.body;
   if (!opmlContent) {
     return res.status(400).json({ error: 'OPML XML content is required' });
@@ -1598,7 +1765,7 @@ app.post('/api/opml/import', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/opml/export', (_req: Request, res: Response) => {
+app.get('/api/opml/export', requireAuth, (_req: Request, res: Response) => {
   const store = readStore();
   const feeds = store.feeds || [];
 
@@ -1664,6 +1831,15 @@ async function startServer() {
   app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`RSSNewsFeeds Server running on http://0.0.0.0:${PORT}`);
   });
+}
+
+// Shout about the open configuration at boot: the failure mode is silent.
+if (!isPassphraseRequired()) {
+  console.warn(
+    '[server] APP_PASSPHRASE is not set - this app is running WITHOUT a passphrase. ' +
+      'Anyone who can reach it can read and change the library and spend your Gemini quota. ' +
+      'Set APP_PASSPHRASE (AI Studio -> Secrets, or .env locally) before exposing it.'
+  );
 }
 
 startServer();

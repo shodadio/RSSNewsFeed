@@ -24,7 +24,7 @@ import {
 import { Feed, DEFAULT_FOLDER } from '../types';
 import { suggestCategoriesAndTags, CANONICAL_FOLDERS } from '../utils/categorySuggester';
 import { FolderPicker } from './FolderPicker';
-import { getJsonHeaders } from '../utils/api';
+import { getJsonHeaders, guardedFetch } from '../utils/api';
 
 interface AddFeedModalProps {
   isOpen: boolean;
@@ -124,7 +124,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
     setIsFetchingRecommended(true);
     setRecommendedError(null);
     try {
-      const res = await fetch('/api/ai/recommended-tech-feeds', {
+      const res = await guardedFetch('/api/ai/recommended-tech-feeds', {
         headers: getJsonHeaders()
       });
       const data = await res.json();
@@ -170,7 +170,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
     setAiError(null);
     setAiNotice(null);
     try {
-      const res = await fetch('/api/ai/search-feeds', {
+      const res = await guardedFetch('/api/ai/search-feeds', {
         method: 'POST',
         headers: getJsonHeaders(),
         body: JSON.stringify({ query: aiQuery.trim() })
@@ -267,7 +267,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
     setError(null);
 
     try {
-      const res = await fetch('/api/feeds/fetch', {
+      const res = await guardedFetch('/api/feeds/fetch', {
         method: 'POST',
         headers: getJsonHeaders(),
         body: JSON.stringify({ url: url.trim() })
