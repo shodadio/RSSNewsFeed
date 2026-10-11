@@ -29,6 +29,7 @@ import { PWAInstallGuide } from './PWAInstallGuide';
 import { AIBriefCard } from './AIBriefCard';
 import { formatTag, isMetaTag } from '../utils/tagUtils';
 import { ConfirmDialog } from './ConfirmDialog';
+import { FolderPicker } from './FolderPicker';
 
 interface SidebarProps {
   feeds: Feed[];
@@ -40,6 +41,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onOpenReader?: () => void;
   onDeleteFeed?: (feedId: string) => void;
+  onUpdateFeed?: (feedId: string, updates: Partial<Feed>) => void;
   unreadCountByFeed: Record<string, number>;
   totalUnreadCount: number;
   todayCount: number;
@@ -128,6 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSettings,
   onOpenReader,
   onDeleteFeed,
+  onUpdateFeed,
   unreadCountByFeed,
   totalUnreadCount,
   todayCount,
@@ -144,6 +147,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [feedActionTarget, setFeedActionTarget] = useState<Feed | null>(null);
   const [confirmDeleteFeed, setConfirmDeleteFeed] = useState<Feed | null>(null);
+  const [showMovePicker, setShowMovePicker] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const toggleFolder = (folderName: string) => {
@@ -152,6 +156,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       [folderName]: !prev[folderName]
     }));
   };
+
+  const folderNames = useMemo(
+    () => Array.from(new Set(feeds.map((f) => f.folder || 'Feeds'))),
+    [feeds]
+  );
 
   // Group feeds by folder
   const groupedFeeds: Record<string, Feed[]> = {};
@@ -377,7 +386,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       unreadCountByFeed={unreadCountByFeed}
                       onSelectFilter={onSelectFilter}
                       isFeedActive={isFeedActive}
-                      onOpenFeedMenu={setFeedActionTarget}
+                      onOpenFeedMenu={(feed) => {
+                        setShowMovePicker(false);
+                        setFeedActionTarget(feed);
+                      }}
                     />
                   )}
                 </div>
@@ -475,6 +487,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <div className="space-y-1 text-xs font-medium">
+              {onUpdateFeed && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowMovePicker((v) => !v)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/[0.06] text-slate-200 transition"
+                  >
+                    <div className="p-1.5 rounded-lg bg-[#0A84FF]/20 text-[#0A84FF]">
+                      <FolderOpen className="w-4 h-4" />
+                    </div>
+                    <div className="text-left">
+                      <div className="font-semibold">Move to Folder</div>
+                      <div className="text-[10px] text-[#8E8E93]">
+                        Currently: {feedActionTarget.folder || 'Feeds'}
+                      </div>
+                    </div>
+                  </button>
+                  {showMovePicker && (
+                    <div className="px-3 pb-1">
+                      <FolderPicker
+                        folders={folderNames}
+                        current={feedActionTarget.folder || 'Feeds'}
+                        onSelect={(folder) => {
+                          onUpdateFeed(feedActionTarget.id, { folder });
+                          setShowMovePicker(false);
+                          setFeedActionTarget(null);
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => {

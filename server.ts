@@ -11,7 +11,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import Parser from 'rss-parser';
 import { GoogleGenAI, Type } from "@google/genai";
-import { suggestCategoriesAndTags } from './src/utils/categorySuggester.ts';
+import { suggestCategoriesAndTags, getCuratedFolder, CANONICAL_FOLDERS } from './src/utils/categorySuggester.ts';
 
 // Ensure HMR is disabled in AI Studio iframe environment to prevent WebSocket errors
 process.env.DISABLE_HMR = 'true';
@@ -459,6 +459,67 @@ app.post('/api/auth/change-pin', requireAuth, (req: Request, res: Response) => {
   res.json({ success: true, message: 'PIN successfully updated.' });
 });
 
+// ======================== AUTHOR FEED CATEGORIES ========================
+// rss-parser surfaces per-item <category> elements and iTunes categories, but
+// drops channel-level <category> (common in WordPress and Atom feeds), so we
+// additionally scrape those from the raw XML before the first <item>/<entry>.
+function extractFeedCategories(xml: string): string[] {
+  const out = new Set<string>();
+  const firstEntry = xml.search(/<(item|entry)[\s>]/i);
+  const header = firstEntry === -1 ? xml : xml.slice(0, firstEntry);
+
+  // Attribute form: <category text="X" />, <itunes:category text="X"/>, <category term="X"/>
+  const attrRe = /<category\b[^>]*?\b(?:text|term)\s*=\s*["']([^"']+)["'][^>]*\/?>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = attrRe.exec(header)) !== null) {
+    const v = decodeXmlEntities(m[1]).trim();
+    if (v) out.add(v);
+  }
+
+  // Element form: <category>Design</category> (possibly wrapped in CDATA)
+  const elRe = /<category\b[^>]*>([\s\S]*?)<\/category>/gi;
+  while ((m = elRe.exec(header)) !== null) {
+    const v = m[1]
+      .replace(/<!\[CDATA\[|\]\]>/g, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (v) out.add(v);
+  }
+  return Array.from(out);
+}
+
+function decodeXmlEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'");
+}
+
+// Stash the author-declared categories on the parsed feed object.
+function attachFeedCategories(feed: any, xml: string) {
+  try {
+    const channelCategories = extractFeedCategories(xml);
+    const itunes = Array.isArray(feed?.itunes?.categories) ? feed.itunes.categories : [];
+    feed.channelCategories = Array.from(new Set([...channelCategories, ...itunes]));
+  } catch {
+    feed.channelCategories = [];
+  }
+}
+
+// Combine channel + per-item author categories into one signal for the classifier.
+function collectAuthorCategories(feed: any, items: any[]): string[] {
+  const out = new Set<string>();
+  (feed?.channelCategories || []).forEach((c: string) => out.add(String(c)));
+  (feed?.itunes?.categories || []).forEach((c: string) => out.add(String(c)));
+  (items || []).forEach((it) => {
+    if (Array.isArray(it?.categories)) it.categories.forEach((c: string) => out.add(String(c)));
+  });
+  return Array.from(out).filter(Boolean);
+}
+
 // Parse helper with direct safe fetch and SSRF guard
 async function parseFeedCandidate(candidateUrl: string) {
   let targetCandidateUrl = candidateUrl;
@@ -489,6 +550,7 @@ async function parseFeedCandidate(candidateUrl: string) {
       if (text && (text.includes('<rss') || text.includes('<feed') || text.includes('<xml') || text.includes('xmlns') || text.trim().startsWith('<?xml'))) {
         const feed = await rssParser.parseString(text);
         if (feed && feed.items) {
+          attachFeedCategories(feed, text);
           return feed;
         }
       }
@@ -508,6 +570,7 @@ async function parseFeedCandidate(candidateUrl: string) {
           const fbText = await fbRes.text();
           const fbFeed = await rssParser.parseString(fbText);
           if (fbFeed && fbFeed.items) {
+            attachFeedCategories(fbFeed, fbText);
             return fbFeed;
           }
         }
@@ -741,11 +804,13 @@ app.post('/api/feeds/fetch', async (req: Request, res: Response) => {
       };
     });
 
+    const authorCategories = collectAuthorCategories(feed, feed.items || []);
     const suggestions = suggestCategoriesAndTags(
       feedUrl || url,
       feed.title || '',
       feed.description || '',
-      items
+      items,
+      authorCategories
     );
 
     res.json({
@@ -836,6 +901,8 @@ function searchNetNewsWireCatalog(query: string) {
   // Dynamic real feed generation for custom user queries (e.g., cooking, finance, history, etc.)
   const capitalized = query.charAt(0).toUpperCase() + query.slice(1);
   const cleanQuerySlug = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const substackUrl = `https://${cleanQuerySlug}.substack.com/feed`;
+  const substackCurated = getCuratedFolder(substackUrl);
 
   return [
     {
@@ -847,10 +914,10 @@ function searchNetNewsWireCatalog(query: string) {
     },
     {
       title: `${capitalized} Substack Publication`,
-      url: `https://${cleanQuerySlug}.substack.com/feed`,
+      url: substackUrl,
       description: `Independent writing and newsletters covering ${query}.`,
-      folder: 'Culture & Books',
-      keywords: [query.toLowerCase(), 'substack', 'newsletter']
+      folder: substackCurated?.folder || 'Culture & Books',
+      keywords: [query.toLowerCase(), 'substack', 'newsletter', ...(substackCurated?.tags || [])]
     },
     {
       title: `Hacker News Discussions: ${capitalized}`,
@@ -962,8 +1029,10 @@ const handleRecommendedTechFeeds = async (_req: Request, res: Response) => {
   ];
 
   try {
+    const folderList = CANONICAL_FOLDERS.map((f) => `'${f}'`).join(', ');
     const prompt = `Use Google Search to find 8 to 10 of the most popular, high-quality, and active technology publications, developer blogs, and tech news websites that provide public RSS or Atom feeds.
-Find each publication's name, their valid RSS/Atom feed URL, homepage URL, a concise 1-sentence description, and an appropriate category folder (e.g. 'Tech & Architecture', 'AI & Machine Learning', 'Indie Mac & Swift', 'Developer News').
+Find each publication's name, their valid RSS/Atom feed URL, homepage URL, a concise 1-sentence description, and a category folder chosen from EXACTLY this list (never invent a folder): ${folderList}.
+Classification rule: pick the folder that reflects the publication's DOMINANT subject, not every topic it occasionally covers. An AI/technology interview publication that sometimes discusses history or culture belongs to 'AI & Machine Learning'; a broad technology news site belongs to 'Tech & Architecture'.
 Include prominent tech sources like The Verge, Hacker News (news.ycombinator.com/rss), Ars Technica, 9to5Mac, Simon Willison, or TechCrunch.
 
 Respond ONLY with a valid JSON array matching this format:
@@ -1009,12 +1078,14 @@ Respond ONLY with a valid JSON array matching this format:
           if (feedUrl.includes('hnrss.org')) {
             feedUrl = 'https://news.ycombinator.com/rss';
           }
+          const curated = getCuratedFolder(feedUrl);
+          const proposedFolder = String(f.folder || 'Tech & Architecture').trim();
           return {
             title: String(f.title).trim(),
             url: feedUrl,
             homeUrl: f.homeUrl ? String(f.homeUrl).trim() : f.url,
             description: String(f.description || 'Popular technology publication.').trim(),
-            folder: String(f.folder || 'Tech & Architecture').trim(),
+            folder: curated ? curated.folder : proposedFolder,
             favicon: host ? `https://www.google.com/s2/favicons?domain=${host}&sz=32` : undefined
           };
         });

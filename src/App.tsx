@@ -457,6 +457,18 @@ export default function App() {
     }
   };
 
+  // Update a feed's editable metadata (used by the "Move to Folder" affordance).
+  // Letting the reader re-file a feed is the durable fix when auto-categorization
+  // puts a publication in the wrong folder (e.g. a podcast-style Substack).
+  const handleUpdateFeed = useCallback((feedId: string, updates: Partial<Feed>) => {
+    setFeeds((prev) => {
+      const next = prev.map((f) => (f.id === feedId ? { ...f, ...updates } : f));
+      saveLocalFeeds(next);
+      syncStateWithServer(next);
+      return next;
+    });
+  }, [syncStateWithServer]);
+
   // Delete Article Handler (permanent deletion across devices)
   const handleDeleteArticle = useCallback((articleId: string) => {
     setDeletedArticleIds((prev) => {
@@ -933,6 +945,7 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         feeds={feeds}
         onDeleteFeed={handleDeleteFeed}
+        onUpdateFeed={handleUpdateFeed}
         onLogout={handleLogout}
         onImportComplete={() => {
           loadStoredData().then((f) => {
@@ -959,6 +972,7 @@ export default function App() {
               }
             }}
             onDeleteFeed={handleDeleteFeed}
+            onUpdateFeed={handleUpdateFeed}
             unreadCountByFeed={unreadCountByFeed}
             totalUnreadCount={totalUnreadCount}
             todayCount={todayCount}
@@ -1054,6 +1068,7 @@ export default function App() {
                     setMobilePane('reader');
                   }}
                   onDeleteFeed={handleDeleteFeed}
+                  onUpdateFeed={handleUpdateFeed}
                   unreadCountByFeed={unreadCountByFeed}
                   totalUnreadCount={totalUnreadCount}
                   todayCount={todayCount}

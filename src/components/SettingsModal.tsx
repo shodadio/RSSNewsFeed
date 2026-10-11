@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Settings as SettingsIcon,
   X,
@@ -20,18 +20,21 @@ import {
   Smartphone,
   Cloud,
   Lock,
-  Unlock
+  Unlock,
+  Layers
 } from 'lucide-react';
 import { Feed } from '../types';
 import { getStorageMode, setStorageMode, saveLocalFeeds } from '../utils/storage';
 import { getAuthHeaders } from '../utils/api';
 import { ConfirmDialog } from './ConfirmDialog';
+import { FolderPicker } from './FolderPicker';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   feeds: Feed[];
   onDeleteFeed: (feedId: string) => void;
+  onUpdateFeed?: (feedId: string, updates: Partial<Feed>) => void;
   onLogout: () => void;
   onImportComplete?: () => void;
 }
@@ -41,6 +44,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   feeds,
   onDeleteFeed,
+  onUpdateFeed,
   onLogout,
   onImportComplete
 }) => {
@@ -62,6 +66,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [authRequired, setAuthRequired] = useState(true);
   const [togglingAuth, setTogglingAuth] = useState(false);
   const [confirmDeleteFeed, setConfirmDeleteFeed] = useState<Feed | null>(null);
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+
+  const folderNames = useMemo(
+    () => Array.from(new Set(feeds.map((f) => f.folder || 'Feeds'))),
+    [feeds]
+  );
 
   useEffect(() => {
     fetch('/api/auth/verify', { headers: getAuthHeaders() })
@@ -424,19 +434,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {feeds.map((feed) => (
               <div
                 key={feed.id}
-                className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-850 text-xs"
+                className="rounded-xl bg-slate-950 border border-slate-850 text-xs overflow-hidden"
               >
-                <div className="truncate pr-2">
-                  <div className="font-medium text-slate-200 truncate">{feed.title}</div>
-                  <div className="text-[10px] text-slate-500 truncate">{feed.url}</div>
+                <div className="flex items-center justify-between p-2.5">
+                  <div className="truncate pr-2">
+                    <div className="font-medium text-slate-200 truncate">{feed.title}</div>
+                    <div className="text-[10px] text-slate-500 truncate">{feed.url}</div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {onUpdateFeed && (
+                      <button
+                        onClick={() => setEditingFolderId(editingFolderId === feed.id ? null : feed.id)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[10px] text-amber-300 transition max-w-[140px]"
+                        title="Move to folder"
+                      >
+                        <Layers className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{feed.folder || 'Feeds'}</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setConfirmDeleteFeed(feed)}
+                      className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition shrink-0"
+                      title="Unsubscribe"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setConfirmDeleteFeed(feed)}
-                  className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition shrink-0"
-                  title="Unsubscribe"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {editingFolderId === feed.id && onUpdateFeed && (
+                  <div className="px-2.5 pb-2.5 border-t border-slate-800/70">
+                    <FolderPicker
+                      folders={folderNames}
+                      current={feed.folder || 'Feeds'}
+                      onSelect={(folder) => {
+                        onUpdateFeed(feed.id, { folder });
+                        setEditingFolderId(null);
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>

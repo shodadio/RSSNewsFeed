@@ -17,6 +17,34 @@ interface TaxonomyRule {
   urlPatterns: RegExp[];
 }
 
+/**
+ * Canonical folder taxonomy offered to classifiers (Gemini prompts, pickers).
+ * Users may still create their own folders; this is the suggested vocabulary.
+ */
+export const CANONICAL_FOLDERS = [
+  'AI & Machine Learning',
+  'Tech & Architecture',
+  'Developer News',
+  'Indie Mac & Swift',
+  'Design & UX',
+  'Culture & Books',
+  'Business & Startups',
+  'Finance & Economics',
+  'Science & Space',
+  'News & World',
+  'Gaming & Entertainment',
+  'Food & Cooking',
+  'Sports & Outdoors',
+  'Cryptocurrencies'
+];
+
+interface CuratedFolderRule {
+  /** Matches against the feed hostname (without a leading "www."). */
+  host: RegExp;
+  folder: string;
+  tags?: string[];
+}
+
 const TAXONOMY_RULES: TaxonomyRule[] = [
   {
     category: 'AI & Machine Learning',
@@ -95,11 +123,78 @@ const TAXONOMY_RULES: TaxonomyRule[] = [
   }
 ];
 
+/**
+ * Curated publication -> folder overrides.
+ *
+ * A publication's *dominant* subject is not always discoverable from its feed
+ * title/description keywords: a Substack whose blurb reads "deeply researched
+ * interviews" scores as culture/books, and Substack exposes no usable category
+ * metadata of its own. For a small set of well-known publications we pin the
+ * folder explicitly. These take precedence over keyword scoring.
+ *
+ * Keep this list short and high-confidence; the user can always move a feed.
+ */
+const CURATED_FOLDER_OVERRIDES: CuratedFolderRule[] = [
+  { host: /(^|\.)dwarkesh\.(com|substack\.com)$/i, folder: 'AI & Machine Learning', tags: ['ai', 'interviews'] },
+  { host: /(^|\.)simonwillison\.net$/i, folder: 'AI & Machine Learning', tags: ['ai', 'llm', 'python'] },
+  { host: /(^|\.)openai\.com$/i, folder: 'AI & Machine Learning', tags: ['ai', 'llm'] },
+  { host: /(^|\.)anthropic\.com$/i, folder: 'AI & Machine Learning', tags: ['ai', 'llm'] },
+  { host: /(^|\.)deepmind\.(com|google)$/i, folder: 'AI & Machine Learning', tags: ['ai', 'research'] },
+  { host: /(^|\.)huggingface\.co$/i, folder: 'AI & Machine Learning', tags: ['ai', 'open-source'] },
+  { host: /(^|\.)daringfireball\.net$/i, folder: 'Indie Mac & Swift', tags: ['apple', 'mac'] },
+  { host: /(^|\.)inessential\.com$/i, folder: 'Indie Mac & Swift', tags: ['mac', 'ios', 'swift'] },
+  { host: /(^|\.)9to5mac\.com$/i, folder: 'Indie Mac & Swift', tags: ['apple', 'mac'] },
+  { host: /(^|\.)macrumors\.com$/i, folder: 'Indie Mac & Swift', tags: ['apple', 'mac'] },
+  { host: /(^|\.)swift\.org$/i, folder: 'Indie Mac & Swift', tags: ['swift'] },
+  { host: /(^|\.)hackingwithswift\.com$/i, folder: 'Indie Mac & Swift', tags: ['swift', 'swiftui'] },
+  { host: /(^|\.)stratechery\.com$/i, folder: 'Tech & Architecture', tags: ['strategy', 'business'] },
+  { host: /(^|\.)github\.blog$/i, folder: 'Tech & Architecture', tags: ['open-source', 'development'] },
+  { host: /(^|\.)nature\.com$/i, folder: 'Science & Space', tags: ['science', 'research'] },
+  { host: /(^|\.)nasa\.gov$/i, folder: 'Science & Space', tags: ['space', 'astronomy'] }
+];
+
+/** Returns the pinned folder + tags for a known publication host, if any. */
+export function getCuratedFolder(
+  url: string = ''
+): { folder: string; tags: string[] } | null {
+  const host = extractHostname(url);
+  if (!host) return null;
+  for (const rule of CURATED_FOLDER_OVERRIDES) {
+    if (rule.host.test(host)) {
+      return { folder: rule.folder, tags: rule.tags || [] };
+    }
+  }
+  return null;
+}
+
+function extractHostname(url: string): string {
+  try {
+    const withProtocol = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    return new URL(withProtocol).hostname.replace(/^www\./i, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function slugifyCategory(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export function suggestCategoriesAndTags(
   url: string = '',
   title: string = '',
   description: string = '',
-  items: Array<{ title?: string; snippet?: string; content?: string }> = []
+  items: Array<{ title?: string; snippet?: string; content?: string }> = [],
+  /**
+   * Author/publisher-declared categories from the feed itself (RSS/Atom
+   * <category> elements and iTunes categories). These are an explicit signal
+   * and are weighted above incidental keyword matches.
+   */
+  authorCategories: string[] = []
 ): CategorySuggestionResult {
   const cleanUrl = url.toLowerCase().trim();
   const cleanTitle = title.toLowerCase().trim();
@@ -113,6 +208,12 @@ export function suggestCategoriesAndTags(
     .toLowerCase();
 
   const fullCorpus = `${cleanUrl} ${cleanTitle} ${cleanDesc} ${itemsText}`;
+
+  // Deduplicate and normalise the author-provided category strings
+  const cleanAuthorCategories = Array.from(
+    new Set(authorCategories.map((c) => String(c || '').trim()).filter(Boolean))
+  );
+  const authorText = cleanAuthorCategories.join(' ').toLowerCase();
 
   // Evaluate candidate scores
   const categoryScores: Array<{
@@ -149,6 +250,19 @@ export function suggestCategoriesAndTags(
       }
     }
 
+    // Author-declared categories are explicit: match them against the same
+    // keyword vocabulary but with a stronger weight.
+    if (authorText) {
+      for (const kw of rule.keywords) {
+        const escaped = kw.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+        if (regex.test(authorText)) {
+          if (!matchedKeywords.includes(kw)) matchedKeywords.push(kw);
+          score += 6;
+        }
+      }
+    }
+
     if (score > 0) {
       categoryScores.push({
         category: rule.category,
@@ -160,7 +274,7 @@ export function suggestCategoriesAndTags(
   }
 
   // Sort descending by score
-  categoryScores.sort((a, b) => b.score - a.score);
+  categoryScores.sort((a, b) => a.score === b.score ? 0 : b.score - a.score);
 
   // Extract structural tags based on domain & URL format
   const derivedTags = new Set<string>();
@@ -202,14 +316,28 @@ export function suggestCategoriesAndTags(
     // ignore
   }
 
+  // Carry author-declared categories through as tags too
+  for (const cat of cleanAuthorCategories.slice(0, 8)) {
+    const slug = slugifyCategory(cat);
+    if (slug && slug.length > 1) derivedTags.add(slug);
+  }
+
   // Compile top categories and tags
-  const suggestedCategories: string[] = [];
+  let suggestedCategories: string[] = [];
   const topMatchedKeywords: string[] = [];
 
   for (const cat of categoryScores.slice(0, 3)) {
     suggestedCategories.push(cat.category);
     cat.tags.forEach((t) => derivedTags.add(t));
     topMatchedKeywords.push(...cat.matchedKeywords);
+  }
+
+  // A curated override always wins for the primary folder, but we keep the
+  // keyword-derived candidates as secondary suggestions.
+  const curated = getCuratedFolder(url);
+  if (curated) {
+    suggestedCategories = [curated.folder, ...suggestedCategories.filter((c) => c !== curated.folder)];
+    curated.tags.forEach((t) => derivedTags.add(t));
   }
 
   // Fallback defaults if no specific score
@@ -222,7 +350,7 @@ export function suggestCategoriesAndTags(
     derivedTags.add('rss');
   }
 
-  const primaryCategory = suggestedCategories[0] || 'Subscriptions';
+  const primaryCategory = curated ? curated.folder : (suggestedCategories[0] || 'Subscriptions');
 
   return {
     primaryCategory,
