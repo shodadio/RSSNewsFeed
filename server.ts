@@ -11,7 +11,6 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import dns from 'dns/promises';
-import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import Parser from 'rss-parser';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -79,12 +78,6 @@ if (!fs.existsSync(DATA_DIR)) {
 
 // Initial seed feeds
 const DEFAULT_STORE = {
-  auth: {
-    pin: '1984',
-    email: 'rol.asthana@purvasa.uk',
-    authRequired: true,
-    sessionTokens: [] as string[]
-  },
   feeds: [
     {
       id: 'feed-inessential',
@@ -267,92 +260,6 @@ async function safeFetch(url: string, init?: RequestInit, maxRedirects = 5): Pro
   throw new Error('Too many redirects while fetching URL');
 }
 
-// ======================== AUTHENTICATION & SECURITY ========================
-
-// Rate limiter for PIN attempts (Brute force defense)
-const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
-
-function isRateLimited(ip: string): boolean {
-  const record = loginAttempts.get(ip);
-  if (!record) return false;
-  if (Date.now() < record.lockedUntil) return true;
-  if (Date.now() >= record.lockedUntil && record.lockedUntil > 0) {
-    loginAttempts.delete(ip);
-    return false;
-  }
-  return false;
-}
-
-function recordFailedLogin(ip: string) {
-  const record = loginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
-  record.count += 1;
-  if (record.count >= 5) {
-    record.lockedUntil = Date.now() + 60000; // 60-second lockout
-  }
-  loginAttempts.set(ip, record);
-}
-
-function resetFailedLogin(ip: string) {
-  loginAttempts.delete(ip);
-}
-
-// Cryptographically secure active tokens
-const activeTokens = new Set<string>();
-
-function initTokensFromStore() {
-  const store = readStore();
-  if (Array.isArray(store.auth?.sessionTokens)) {
-    store.auth.sessionTokens.forEach((t: string) => activeTokens.add(t));
-  }
-}
-initTokensFromStore();
-
-function generateSessionToken(): string {
-  const token = crypto.randomBytes(32).toString('hex');
-  activeTokens.add(token);
-  const store = readStore();
-  if (!Array.isArray(store.auth.sessionTokens)) {
-    store.auth.sessionTokens = [];
-  }
-  store.auth.sessionTokens.push(token);
-  if (store.auth.sessionTokens.length > 25) {
-    store.auth.sessionTokens = store.auth.sessionTokens.slice(-25);
-  }
-  writeStore(store);
-  return token;
-}
-
-function isValidToken(token: string | undefined): boolean {
-  if (!token) return false;
-  if (activeTokens.has(token)) return true;
-  const store = readStore();
-  if (Array.isArray(store.auth?.sessionTokens) && store.auth.sessionTokens.includes(token)) {
-    activeTokens.add(token);
-    return true;
-  }
-  return false;
-}
-
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const store = readStore();
-  if (store.auth?.authRequired === false) {
-    return next();
-  }
-
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ')
-    ? authHeader.slice(7).trim()
-    : (req.headers['x-session-token'] as string);
-
-  if (!isValidToken(token)) {
-    return res.status(401).json({
-      success: false,
-      error: 'Unauthorized: Valid session passcode token is required.'
-    });
-  }
-  next();
-}
-
 // ======================== API ROUTES ========================
 
 // Health check
@@ -360,107 +267,13 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', name: 'RSSNewsFeeds-Web', time: new Date().toISOString() });
 });
 
-// Authentication verify
-app.post('/api/auth/login', (req: Request, res: Response) => {
-  const { pin } = req.body;
-  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || req.ip || 'unknown';
-
-  if (isRateLimited(clientIp)) {
-    return res.status(429).json({
-      success: false,
-      message: 'Too many failed passcode attempts. Please wait 60 seconds before trying again.'
-    });
-  }
-
-  const store = readStore();
-  const configuredPin = String(store.auth?.pin || '1984');
-
-  // Strict verification: PIN is mandatory and must match configured passcode
-  if (!pin || String(pin) !== configuredPin) {
-    recordFailedLogin(clientIp);
-    return res.status(401).json({
-      success: false,
-      message: 'Incorrect PIN passcode.'
-    });
-  }
-
-  resetFailedLogin(clientIp);
-  const sessionToken = generateSessionToken();
-
-  return res.json({
-    success: true,
-    token: sessionToken,
-    user: {
-      email: store.auth?.email || 'rol.asthana@purvasa.uk',
-      authRequired: store.auth?.authRequired ?? true
-    }
-  });
-});
-
-// Verify existing session token or auth requirement
-app.get('/api/auth/verify', (req: Request, res: Response) => {
-  const store = readStore();
-  const authRequired = store.auth?.authRequired !== false;
-
-  if (!authRequired) {
-    return res.json({
-      valid: true,
-      authRequired: false,
-      user: {
-        email: store.auth?.email || 'rol.asthana@purvasa.uk',
-        authRequired: false
-      }
-    });
-  }
-
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ')
-    ? authHeader.slice(7).trim()
-    : (req.headers['x-session-token'] as string);
-
-  if (isValidToken(token)) {
-    return res.json({
-      valid: true,
-      authRequired: true,
-      user: {
-        email: store.auth?.email || 'rol.asthana@purvasa.uk',
-        authRequired: true
-      }
-    });
-  }
-
-  return res.status(401).json({
-    valid: false,
-    authRequired: true,
-    message: 'Session passcode token is required or expired.'
-  });
-});
-
-// Toggle passcode requirement
-app.post('/api/auth/toggle-required', requireAuth, (req: Request, res: Response) => {
-  const { authRequired } = req.body;
-  const store = readStore();
-  if (!store.auth) store.auth = { ...DEFAULT_STORE.auth };
-  store.auth.authRequired = Boolean(authRequired);
-  writeStore(store);
-  res.json({ success: true, authRequired: store.auth.authRequired });
-});
-
-app.post('/api/auth/change-pin', requireAuth, (req: Request, res: Response) => {
-  const { currentPin, newPin } = req.body;
-  const store = readStore();
-
-  if (String(currentPin) !== String(store.auth?.pin)) {
-    return res.status(401).json({ success: false, message: 'Current PIN does not match.' });
-  }
-
-  if (!newPin || String(newPin).length < 4) {
-    return res.status(400).json({ success: false, message: 'New PIN must be at least 4 digits.' });
-  }
-
-  store.auth.pin = String(newPin);
-  writeStore(store);
-  res.json({ success: true, message: 'PIN successfully updated.' });
+// Passcode verification (compatibility shim).
+// The passcode gate is gone: this is a single-user reader and the PIN was only a
+// local convenience. This endpoint is kept so an already-installed copy of the app
+// (a cached service-worker bundle that still calls /api/auth/verify on startup)
+// unlocks itself normally instead of getting stuck on a login screen.
+app.get('/api/auth/verify', (_req: Request, res: Response) => {
+  res.json({ valid: true, authRequired: false });
 });
 
 // ======================== AUTHOR FEED CATEGORIES ========================
@@ -1640,12 +1453,11 @@ app.get('/api/storage', (_req: Request, res: Response) => {
     starredArticleIds: store.starredArticleIds || [],
     archivedArticleIds: store.archivedArticleIds || [],
     deletedArticleIds: store.deletedArticleIds || [],
-    deletedFeedUrls: store.deletedFeedUrls || [],
-    authRequired: store.auth?.authRequired ?? true
+    deletedFeedUrls: store.deletedFeedUrls || []
   });
 });
 
-app.post('/api/storage', requireAuth, (req: Request, res: Response) => {
+app.post('/api/storage', (req: Request, res: Response) => {
   const { feeds, readArticleIds, starredArticleIds, archivedArticleIds, deletedArticleIds, deletedFeedUrls } = req.body;
   const store = readStore();
 
@@ -1661,7 +1473,7 @@ app.post('/api/storage', requireAuth, (req: Request, res: Response) => {
 });
 
 // Atomic Article Actions: delete, archive, unarchive, favorite, unfavorite
-app.post('/api/articles/action', requireAuth, (req: Request, res: Response) => {
+app.post('/api/articles/action', (req: Request, res: Response) => {
   const { action, articleId, articleIds } = req.body;
   const ids: string[] = Array.isArray(articleIds) ? articleIds : (articleId ? [articleId] : []);
   if (!action || ids.length === 0) {
@@ -1723,7 +1535,7 @@ function escapeXml(unsafe: string): string {
 }
 
 // OPML Import & Export
-app.post('/api/opml/import', requireAuth, async (req: Request, res: Response) => {
+app.post('/api/opml/import', async (req: Request, res: Response) => {
   const { opmlContent } = req.body;
   if (!opmlContent) {
     return res.status(400).json({ error: 'OPML XML content is required' });

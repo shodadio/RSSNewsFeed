@@ -7,7 +7,6 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Sidebar } from './components/Sidebar';
 import { Timeline } from './components/Timeline';
 import { ArticleView } from './components/ArticleView';
-import { AuthModal } from './components/AuthModal';
 import { AddFeedModal } from './components/AddFeedModal';
 import { SettingsModal } from './components/SettingsModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -30,7 +29,7 @@ import {
   getLocalBriefingAttemptDate,
   markLocalBriefingAttempt
 } from './utils/storage';
-import { getAuthHeaders, AUTH_EXPIRED_EVENT } from './utils/api';
+import { getJsonHeaders } from './utils/api';
 import { formatTag } from './utils/tagUtils';
 
 const DEFAULT_FEEDS: Feed[] = [
@@ -86,41 +85,6 @@ type PendingUndo =
 const UNDO_WINDOW_MS = 6000;
 
 export default function App() {
-  // Authentication State
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return !!localStorage.getItem('nnw_session_token');
-  });
-  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
-
-  // Verify session token on startup and listen for auth expiration (401)
-  useEffect(() => {
-    const verifyToken = async () => {
-      try {
-        const res = await fetch('/api/auth/verify', {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          setIsAuthenticated(true);
-        } else if (res.status === 401) {
-          // Token is no longer valid on the server
-          localStorage.removeItem('nnw_session_token');
-          setIsAuthenticated(false);
-        }
-      } catch {
-        // Offline / network failure: keep existing local state
-      }
-    };
-    verifyToken();
-
-    const handleAuthExpired = () => {
-      setIsAuthenticated(false);
-      setShowAuthModal(true);
-    };
-
-    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
-    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
-  }, []);
-
   // Data State with Local-First Persistence: Initialized directly from device storage
   const [feeds, setFeeds] = useState<Feed[]>(() => {
     const local = getLocalFeeds();
@@ -235,7 +199,7 @@ export default function App() {
       // 2. Synchronize with server in the background
       fetch('/api/storage', {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: getJsonHeaders(),
         body: JSON.stringify({
           feeds: feedsToSave,
           readArticleIds: Array.from(readToSave),
@@ -257,7 +221,7 @@ export default function App() {
 
     try {
       const res = await fetch('/api/storage', {
-        headers: getAuthHeaders()
+        headers: getJsonHeaders()
       });
       if (res.ok) {
         const data = await res.json();
@@ -350,7 +314,7 @@ export default function App() {
         try {
           const res = await fetch('/api/feeds/fetch', {
             method: 'POST',
-            headers: getAuthHeaders(),
+            headers: getJsonHeaders(),
             body: JSON.stringify({ url: feed.url })
           });
           if (res.ok) {
@@ -548,7 +512,7 @@ export default function App() {
     }
     fetch('/api/articles/action', {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'delete', articleId })
     }).catch(console.error);
   }, [selectedArticleId, syncStateWithServer, isMobile]);
@@ -594,7 +558,7 @@ export default function App() {
 
     fetch('/api/articles/action', {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'restore', articleIds: Array.from(restoredIds) })
     }).catch(console.error);
   }, [syncStateWithServer]);
@@ -635,7 +599,7 @@ export default function App() {
     });
     fetch('/api/articles/update', {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: getJsonHeaders(),
       body: JSON.stringify(updatedArticle)
     }).catch(() => {
       // ignore offline errors
@@ -659,7 +623,7 @@ export default function App() {
     }
     fetch('/api/articles/action', {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'archive', articleId })
     }).catch(console.error);
   }, [selectedArticleId, syncStateWithServer, activeFilter.type, isMobile]);
@@ -675,7 +639,7 @@ export default function App() {
     });
     fetch('/api/articles/action', {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'unarchive', articleId })
     }).catch(console.error);
   }, [syncStateWithServer]);
@@ -779,7 +743,7 @@ export default function App() {
     });
     fetch('/api/articles/action', {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'toggle-favorite', articleId })
     }).catch(console.error);
   }, [syncStateWithServer]);
@@ -814,7 +778,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...getAuthHeaders()
+          ...getJsonHeaders()
         },
         body: JSON.stringify({
           articles: pool.slice(0, 40).map((a) => ({
@@ -985,11 +949,6 @@ export default function App() {
     return Array.from(set);
   }, [feeds]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('nnw_session_token');
-    setIsAuthenticated(false);
-  };
-
   const undoMessage = pendingUndo
     ? pendingUndo.kind === 'delete'
       ? pendingUndo.entries.length === 1
@@ -1000,21 +959,6 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-black text-slate-100 font-sans selection:bg-[#0A84FF]/30 selection:text-white">
-      {/* Auth Screen Lock / Unlock Modal */}
-      {(!isAuthenticated || showAuthModal) && (
-        <AuthModal
-          isDismissible={isAuthenticated && showAuthModal}
-          onClose={() => setShowAuthModal(false)}
-          onAuthenticated={(_token, _email) => {
-            setIsAuthenticated(true);
-            setShowAuthModal(false);
-            loadStoredData().then((f) => {
-              if (f) refreshAllFeeds(f);
-            });
-          }}
-        />
-      )}
-
       {/* Offline Indicator Toast */}
       <OfflineIndicator />
 
@@ -1044,7 +988,6 @@ export default function App() {
         feeds={feeds}
         onDeleteFeed={handleDeleteFeed}
         onUpdateFeed={handleUpdateFeed}
-        onLogout={handleLogout}
         onImportComplete={() => {
           loadStoredData().then((f) => {
             if (f) refreshAllFeeds(f);
@@ -1123,7 +1066,6 @@ export default function App() {
             onToggleStar={() => selectedArticle && handleToggleStar(selectedArticle.id)}
             onToggleRead={() => selectedArticle && handleToggleRead(selectedArticle.id)}
             isMobile={false}
-            onOpenAuth={() => setShowAuthModal(true)}
             hasPrevArticle={hasPrevArticle}
             hasNextArticle={hasNextArticle}
             onPrevArticle={handlePrevArticle}
@@ -1242,7 +1184,6 @@ export default function App() {
                   onToggleRead={() => selectedArticle && handleToggleRead(selectedArticle.id)}
                   onBackToTimeline={() => setMobilePane('timeline')}
                   isMobile={true}
-                  onOpenAuth={() => setShowAuthModal(true)}
                   hasPrevArticle={hasPrevArticle}
                   hasNextArticle={hasNextArticle}
                   onPrevArticle={handlePrevArticle}

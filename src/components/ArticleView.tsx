@@ -24,12 +24,10 @@ import {
   Check,
   X,
   MoreHorizontal,
-  Lock,
   AlertCircle
 } from 'lucide-react';
 import { Article, ScrapedArticle } from '../types';
-import { getAuthHeaders, notifySessionExpired } from '../utils/api';
-import { AuthModal } from './AuthModal';
+import { getJsonHeaders } from '../utils/api';
 import { MobileReaderBar } from './MobileReaderBar';
 import DOMPurify from 'dompurify';
 
@@ -41,7 +39,6 @@ interface ArticleViewProps {
   onToggleRead: () => void;
   onBackToTimeline?: () => void;
   isMobile: boolean;
-  onOpenAuth?: () => void;
   hasPrevArticle?: boolean;
   hasNextArticle?: boolean;
   onPrevArticle?: () => void;
@@ -56,7 +53,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
   onToggleRead,
   onBackToTimeline,
   isMobile,
-  onOpenAuth,
   hasPrevArticle = false,
   hasNextArticle = false,
   onPrevArticle = () => {},
@@ -107,8 +103,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
   const [summariesCache, setSummariesCache] = useState<Record<string, string>>({});
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [isAuthError, setIsAuthError] = useState(false);
-  const [showInlineAuth, setShowInlineAuth] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [hasCopiedSummary, setHasCopiedSummary] = useState(false);
 
@@ -336,7 +330,7 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
     try {
       const res = await fetch('/api/feeds/scrape-article', {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: getJsonHeaders(),
         body: JSON.stringify({ url: article.link })
       });
       const data = await res.json();
@@ -438,7 +432,7 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
     try {
       const res = await fetch('/api/articles/summarize', {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: getJsonHeaders(),
         body: JSON.stringify({
           title: article.title,
           content: (isReaderMode && scrapedData?.contentHtml) || article.content,
@@ -449,31 +443,15 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
 
       const data = await res.json();
       if (!res.ok) {
-        if (res.status === 401) {
-          setIsAuthError(true);
-          notifySessionExpired('Passcode authentication required.');
-        } else {
-          setIsAuthError(false);
-        }
         throw new Error(data.error || 'Failed to generate 1-sentence summary.');
       }
-
-      setIsAuthError(false);
       setSummariesCache((prev) => ({
         ...prev,
         [article.id]: data.summary
       }));
       setShowSummary(true);
     } catch (err: any) {
-      const msg = err.message || 'Failed to generate 1-sentence summary with Gemini.';
-      if (
-        msg.toLowerCase().includes('passcode') ||
-        msg.toLowerCase().includes('unauthorized') ||
-        msg.toLowerCase().includes('token')
-      ) {
-        setIsAuthError(true);
-      }
-      setSummaryError(msg);
+      setSummaryError(err.message || 'Failed to generate 1-sentence summary with Gemini.');
     } finally {
       setIsSummarizing(false);
     }
@@ -814,30 +792,14 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
                     <span className="leading-tight">{summaryError}</span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
-                    {isAuthError ? (
-                      <button
-                        onClick={() => {
-                          if (onOpenAuth) {
-                            onOpenAuth();
-                          } else {
-                            setShowInlineAuth(true);
-                          }
-                        }}
-                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition"
-                      >
-                        <Lock className="w-3.5 h-3.5" />
-                        <span>Unlock with Passcode</span>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          handleSummarizeArticle();
-                        }}
-                        className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 rounded-lg text-xs font-medium transition"
-                      >
-                        Retry
-                      </button>
-                    )}
+                    <button
+                      onClick={() => {
+                        handleSummarizeArticle();
+                      }}
+                      className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 rounded-lg text-xs font-medium transition"
+                    >
+                      Retry
+                    </button>
                   </div>
                 </div>
               ) : currentSummary ? (
@@ -1019,18 +981,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
         />
       )}
 
-      {showInlineAuth && (
-        <AuthModal
-          isDismissible
-          onClose={() => setShowInlineAuth(false)}
-          onAuthenticated={() => {
-            setShowInlineAuth(false);
-            setIsAuthError(false);
-            setSummaryError(null);
-            handleSummarizeArticle();
-          }}
-        />
-      )}
     </main>
   );
 };

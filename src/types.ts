@@ -53,12 +53,6 @@ export interface SmartFilter {
   title: string;
 }
 
-export interface UserSession {
-  email: string;
-  token: string;
-  isAuthenticated: boolean;
-}
-
 /** One ranked story inside a daily briefing. `id` (when present) maps back to
  * a stored Article so the digest can open it in the reader instead of a new tab. */
 export interface AIBriefingStory {
