@@ -472,6 +472,34 @@ export default function App() {
     });
   }, [syncStateWithServer]);
 
+  // Rename a folder across every feed filed in it. Folders are a labelling of
+  // feeds rather than records of their own, so a rename re-files the whole group;
+  // renaming onto an existing name merges the two folders. Both stores are
+  // updated, so the new name survives a reload on any device.
+  const handleRenameFolder = useCallback(
+    (oldName: string, newName: string) => {
+      const target = newName.trim();
+      if (!target || target === oldName) return;
+
+      setFeeds((prev) => {
+        const next = prev.map((f) =>
+          (f.folder || DEFAULT_FOLDER) === oldName ? { ...f, folder: target } : f
+        );
+        saveLocalFeeds(next);
+        syncStateWithServer(next);
+        return next;
+      });
+
+      // Keep the reader on the renamed group instead of a now-empty filter.
+      setActiveFilter((prev) =>
+        prev.type === 'folder' && prev.id === oldName
+          ? { ...prev, id: target, title: target }
+          : prev
+      );
+    },
+    [syncStateWithServer]
+  );
+
   // Delete Article Handler (permanent deletion across devices)
   const handleDeleteArticle = useCallback((articleId: string) => {
     setDeletedArticleIds((prev) => {
@@ -976,6 +1004,7 @@ export default function App() {
             }}
             onDeleteFeed={handleDeleteFeed}
             onUpdateFeed={handleUpdateFeed}
+            onRenameFolder={handleRenameFolder}
             unreadCountByFeed={unreadCountByFeed}
             totalUnreadCount={totalUnreadCount}
             todayCount={todayCount}
@@ -1073,6 +1102,7 @@ export default function App() {
                   }}
                   onDeleteFeed={handleDeleteFeed}
                   onUpdateFeed={handleUpdateFeed}
+                  onRenameFolder={handleRenameFolder}
                   unreadCountByFeed={unreadCountByFeed}
                   totalUnreadCount={totalUnreadCount}
                   todayCount={todayCount}

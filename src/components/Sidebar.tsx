@@ -43,6 +43,7 @@ interface SidebarProps {
   onOpenReader?: () => void;
   onDeleteFeed?: (feedId: string) => void;
   onUpdateFeed?: (feedId: string, updates: Partial<Feed>) => void;
+  onRenameFolder?: (oldName: string, newName: string) => void;
   unreadCountByFeed: Record<string, number>;
   totalUnreadCount: number;
   todayCount: number;
@@ -159,6 +160,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenReader,
   onDeleteFeed,
   onUpdateFeed,
+  onRenameFolder,
   unreadCountByFeed,
   totalUnreadCount,
   todayCount,
@@ -211,6 +213,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
     () => Array.from(new Set(feeds.map((f) => f.folder || DEFAULT_FOLDER))),
     [feeds]
   );
+
+  // Folder rename sheet. Folders have no record of their own -- they are derived
+  // from the feeds filed under them -- so renaming is a re-file of the group.
+  const [folderActionTarget, setFolderActionTarget] = useState<string | null>(null);
+  const [showRenameInput, setShowRenameInput] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+
+  const renameTarget = renameValue.trim();
+  const renameWillMerge =
+    !!renameTarget && renameTarget !== folderActionTarget && folderNames.includes(renameTarget);
+
+  const submitFolderRename = () => {
+    if (!folderActionTarget || !renameTarget || renameTarget === folderActionTarget) return;
+    onRenameFolder?.(folderActionTarget, renameTarget);
+    setFolderActionTarget(null);
+    setShowRenameInput(false);
+  };
 
   // Group feeds by folder
   const groupedFeeds: Record<string, Feed[]> = {};
@@ -432,9 +451,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <FolderOpen className={`w-4 h-4 stroke-[1.5] shrink-0 ${folderActive ? 'text-white' : 'text-[#0A84FF]'}`} />
                       <span className="font-semibold truncate">{folderName}</span>
                     </button>
-                    <span className={`text-xs font-normal pr-3.5 pl-1 shrink-0 ${folderActive ? 'text-white/80' : 'text-[#8E8E93]'}`}>
+                    <span className={`text-xs font-normal pl-1 shrink-0 ${folderActive ? 'text-white/80' : 'text-[#8E8E93]'}`}>
                       {folderUnread > 0 ? folderUnread : ''}
                     </span>
+                    {/* Renaming a folder used to mean opening every feed inside it.
+                        Same visible affordance as a feed row, so it works on iOS. */}
+                    {onRenameFolder && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenameValue(folderName);
+                          setShowRenameInput(false);
+                          setFolderActionTarget(folderName);
+                        }}
+                        aria-label={`Options for folder ${folderName}`}
+                        aria-haspopup="dialog"
+                        className={`shrink-0 p-2 mr-2 rounded-lg transition ${
+                          folderActive
+                            ? 'text-white/90 hover:bg-white/15'
+                            : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.08]'
+                        }`}
+                      >
+                        <MoreHorizontal className="w-4 h-4 stroke-[1.5]" />
+                      </button>
+                    )}
                   </div>
 
                   {/* Folder Feeds List */}
@@ -599,6 +640,95 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               type="button"
               onClick={() => setFeedActionTarget(null)}
+              className="w-full py-2.5 rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] text-slate-200 font-semibold text-xs transition"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Folder options sheet (rename). Portaled so it sits above the sidebar. */}
+      {folderActionTarget && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-150"
+          onClick={() => setFolderActionTarget(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-[#1C1C1E] border border-white/10 p-4 shadow-2xl text-slate-100 space-y-3 animate-in slide-in-from-bottom-5 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-3 pt-2 pb-1 border-b border-white/[0.08]">
+              <span className="text-[10px] text-[#8E8E93] font-semibold uppercase tracking-wider block mb-1">
+                Folder Options
+              </span>
+              <h4 className="text-sm font-bold text-white truncate">{folderActionTarget}</h4>
+              <p className="text-[11px] text-[#8E8E93] mt-0.5">
+                {(groupedFeeds[folderActionTarget] || []).length}{' '}
+                {(groupedFeeds[folderActionTarget] || []).length === 1
+                  ? 'subscription'
+                  : 'subscriptions'}
+              </p>
+            </div>
+
+            <div className="space-y-1 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setShowRenameInput((v) => !v)}
+                aria-expanded={showRenameInput}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/[0.06] text-slate-200 transition"
+              >
+                <div className="p-1.5 rounded-lg bg-[#0A84FF]/20 text-[#0A84FF]">
+                  <FolderOpen className="w-4 h-4" />
+                </div>
+                <div className="text-left">
+                  <div className="font-semibold">Rename Folder</div>
+                  <div className="text-[10px] text-[#8E8E93]">
+                    Currently: {folderActionTarget}
+                  </div>
+                </div>
+              </button>
+
+              {showRenameInput && onRenameFolder && (
+                <div className="px-3 pb-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          submitFolderRename();
+                        }
+                      }}
+                      aria-label="New folder name"
+                      placeholder="Folder name"
+                      className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 focus:outline-none focus:border-[#0A84FF] transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={submitFolderRename}
+                      disabled={!renameTarget || renameTarget === folderActionTarget}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[#0A84FF] hover:opacity-90 text-white disabled:opacity-40 transition shrink-0"
+                    >
+                      Rename
+                    </button>
+                  </div>
+                  {renameWillMerge && (
+                    <p className="text-[10px] text-amber-400/90">
+                      &#8220;{renameTarget}&#8221; already exists &mdash; the two folders will merge.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setFolderActionTarget(null)}
               className="w-full py-2.5 rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] text-slate-200 font-semibold text-xs transition"
             >
               Cancel
