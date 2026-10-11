@@ -27,7 +27,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Article, ScrapedArticle } from '../types';
-import { getJsonHeaders } from '../utils/api';
+import { getJsonHeaders, guardedFetch } from '../utils/api';
 import { MobileReaderBar } from './MobileReaderBar';
 import DOMPurify from 'dompurify';
 
@@ -328,7 +328,7 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
     setIsScraping(true);
     setScrapeError(null);
     try {
-      const res = await fetch('/api/feeds/scrape-article', {
+      const res = await guardedFetch('/api/feeds/scrape-article', {
         method: 'POST',
         headers: getJsonHeaders(),
         body: JSON.stringify({ url: article.link })
@@ -430,7 +430,7 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
     setShowSummary(true);
 
     try {
-      const res = await fetch('/api/articles/summarize', {
+      const res = await guardedFetch('/api/articles/summarize', {
         method: 'POST',
         headers: getJsonHeaders(),
         body: JSON.stringify({

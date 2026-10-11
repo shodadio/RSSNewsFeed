@@ -6,6 +6,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   Settings as SettingsIcon,
+  KeyRound,
   X,
   Trash2,
   AlertCircle,
@@ -19,7 +20,7 @@ import {
 } from 'lucide-react';
 import { Feed, DEFAULT_FOLDER } from '../types';
 import { getStorageMode, setStorageMode, saveLocalFeeds } from '../utils/storage';
-import { getJsonHeaders } from '../utils/api';
+import { getJsonHeaders, guardedFetch } from '../utils/api';
 import { ConfirmDialog } from './ConfirmDialog';
 import { FolderPicker } from './FolderPicker';
 
@@ -30,6 +31,10 @@ interface SettingsModalProps {
   onDeleteFeed: (feedId: string) => void;
   onUpdateFeed?: (feedId: string, updates: Partial<Feed>) => void;
   onImportComplete?: () => void;
+  /** Whether the server is configured to require the shared passphrase. */
+  passphraseRequired?: boolean;
+  /** Drop this device's session, forcing the gate again. */
+  onLock?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -38,7 +43,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   feeds,
   onDeleteFeed,
   onUpdateFeed,
-  onImportComplete
+  onImportComplete,
+  passphraseRequired = false,
+  onLock
 }) => {
   // OPML state inside Settings
   const [opmlText, setOpmlText] = useState('');
@@ -88,7 +95,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setOpmlStatus(null);
 
     try {
-      const res = await fetch('/api/opml/import', {
+      const res = await guardedFetch('/api/opml/import', {
         method: 'POST',
         headers: getJsonHeaders(),
         body: JSON.stringify({ opmlContent: opmlText })
@@ -179,6 +186,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <span>Local persistence active: Your feeds, starred articles, and reading history are saved directly on your device and will never reset on server restarts.</span>
           </div>
         </div>
+        {/* Shared Passphrase */}
+        <div className="border-t border-slate-800 pt-5 mb-6">
+          <h4 className="text-xs font-semibold text-slate-200 mb-2 flex items-center gap-1.5">
+            <KeyRound className="w-4 h-4 text-amber-400" /> Shared Passphrase
+          </h4>
+
+          <div
+            className={`p-2.5 rounded-xl text-[11px] flex items-start gap-2 border ${
+              passphraseRequired
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                : 'bg-amber-500/10 border-amber-500/20 text-amber-200'
+            }`}
+          >
+            {passphraseRequired ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+            ) : (
+              <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+            )}
+            <span>
+              {passphraseRequired
+                ? 'On. This app asks for the shared passphrase before it will read or change anything, and before it spends any AI quota.'
+                : 'Off. No passphrase is configured, so anyone who can reach this app has full access to your library and your AI quota.'}
+            </span>
+          </div>
+
+          <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
+            It lives in the server environment as{' '}
+            <span className="font-mono text-slate-400">APP_PASSPHRASE</span> (AI Studio → Secrets),
+            never in the app or this repository. Changing it signs every device out.
+          </p>
+
+          {passphraseRequired && onLock && (
+            <button
+              type="button"
+              onClick={() => {
+                onLock();
+                onClose();
+              }}
+              className="mt-3 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition"
+            >
+              Lock this device
+            </button>
+          )}
+        </div>
+
         {/* OPML Subscriptions Import & Export Section */}
         <div className="border-t border-slate-800 pt-5 mb-6">
           <h4 className="text-xs font-semibold text-slate-200 mb-2 flex items-center gap-1.5">

@@ -11,6 +11,7 @@ import { AddFeedModal } from './components/AddFeedModal';
 import { SettingsModal } from './components/SettingsModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { UndoToast } from './components/UndoToast';
+import { PassphraseGate } from './components/PassphraseGate';
 import { Feed, Article, SmartFilter, AIBriefing, AIBriefingStory, DEFAULT_FOLDER } from './types';
 import {
   getLocalFeeds,
@@ -29,7 +30,7 @@ import {
   getLocalBriefingAttemptDate,
   markLocalBriefingAttempt
 } from './utils/storage';
-import { getJsonHeaders } from './utils/api';
+import { getJsonHeaders, guardedFetch, AUTH_REQUIRED_EVENT } from './utils/api';
 import { formatTag } from './utils/tagUtils';
 
 const DEFAULT_FEEDS: Feed[] = [
@@ -85,6 +86,12 @@ type PendingUndo =
 const UNDO_WINDOW_MS = 6000;
 
 export default function App() {
+  // Passphrase state. `authRequired` is what the server reports; `isUnlocked` is
+  // whether this browser holds a valid session cookie for it.
+  const [authRequired, setAuthRequired] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
   // Data State with Local-First Persistence: Initialized directly from device storage
   const [feeds, setFeeds] = useState<Feed[]>(() => {
     const local = getLocalFeeds();
@@ -197,7 +204,7 @@ export default function App() {
       saveLocalDeletedFeedUrls(deletedFeedsToSave);
 
       // 2. Synchronize with server in the background
-      fetch('/api/storage', {
+      guardedFetch('/api/storage', {
         method: 'POST',
         headers: getJsonHeaders(),
         body: JSON.stringify({
@@ -220,7 +227,7 @@ export default function App() {
     const localDeleted = getLocalDeletedFeedUrls();
 
     try {
-      const res = await fetch('/api/storage', {
+      const res = await guardedFetch('/api/storage', {
         headers: getJsonHeaders()
       });
       if (res.ok) {
@@ -312,7 +319,7 @@ export default function App() {
     await Promise.allSettled(
       targets.map(async (feed) => {
         try {
-          const res = await fetch('/api/feeds/fetch', {
+          const res = await guardedFetch('/api/feeds/fetch', {
             method: 'POST',
             headers: getJsonHeaders(),
             body: JSON.stringify({ url: feed.url })
@@ -374,14 +381,48 @@ export default function App() {
     setLastRefreshedAt(new Date().toISOString());
   }, [feeds, syncStateWithServer]);
 
-  // Initial load on mount
+  // Ask the server whether a passphrase is configured, and whether this browser
+  // already holds a valid session for it.
   useEffect(() => {
+    let cancelled = false;
+
+    const check = async () => {
+      try {
+        const res = await fetch('/api/auth/verify');
+        const data = res.ok ? await res.json() : { authRequired: false, valid: false };
+        if (cancelled) return;
+        setAuthRequired(Boolean(data.authRequired));
+        setIsUnlocked(!data.authRequired || Boolean(data.valid));
+      } catch {
+        // Server unreachable (offline): the device copy is the source of truth,
+        // so let the reader in rather than showing a gate they cannot pass.
+        if (!cancelled) setIsUnlocked(true);
+      } finally {
+        if (!cancelled) setAuthChecked(true);
+      }
+    };
+    check();
+
+    const handleRequired = () => {
+      setAuthRequired(true);
+      setIsUnlocked(false);
+    };
+    window.addEventListener(AUTH_REQUIRED_EVENT, handleRequired);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(AUTH_REQUIRED_EVENT, handleRequired);
+    };
+  }, []);
+
+  // Initial load, once the gate (if any) is open.
+  useEffect(() => {
+    if (!authChecked || !isUnlocked) return;
     loadStoredData().then((loadedFeeds) => {
       if (loadedFeeds && loadedFeeds.length > 0) {
         refreshAllFeeds(loadedFeeds);
       }
     });
-  }, []);
+  }, [authChecked, isUnlocked]);
 
   // Add Feed Handler
   const handleFeedAdded = (newFeed: Feed) => {
@@ -510,7 +551,7 @@ export default function App() {
         setMobilePane('timeline');
       }
     }
-    fetch('/api/articles/action', {
+    guardedFetch('/api/articles/action', {
       method: 'POST',
       headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'delete', articleId })
@@ -556,7 +597,7 @@ export default function App() {
       return merged;
     });
 
-    fetch('/api/articles/action', {
+    guardedFetch('/api/articles/action', {
       method: 'POST',
       headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'restore', articleIds: Array.from(restoredIds) })
@@ -577,6 +618,13 @@ export default function App() {
   }, [syncStateWithServer]);
 
   // Reverse whichever destructive action is currently pending
+  // Lock this device again: the server drops the session cookie.
+  const handleLockApp = useCallback(() => {
+    fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    setIsUnlocked(false);
+    setAuthRequired(true);
+  }, []);
+
   const handleUndo = useCallback(() => {
     const current = pendingUndo;
     setPendingUndo(null);
@@ -597,7 +645,7 @@ export default function App() {
       saveLocalCachedArticles(next);
       return next;
     });
-    fetch('/api/articles/update', {
+    guardedFetch('/api/articles/update', {
       method: 'POST',
       headers: getJsonHeaders(),
       body: JSON.stringify(updatedArticle)
@@ -621,7 +669,7 @@ export default function App() {
         setMobilePane('timeline');
       }
     }
-    fetch('/api/articles/action', {
+    guardedFetch('/api/articles/action', {
       method: 'POST',
       headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'archive', articleId })
@@ -637,7 +685,7 @@ export default function App() {
       syncStateWithServer(undefined, undefined, undefined, next);
       return next;
     });
-    fetch('/api/articles/action', {
+    guardedFetch('/api/articles/action', {
       method: 'POST',
       headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'unarchive', articleId })
@@ -741,7 +789,7 @@ export default function App() {
       syncStateWithServer(undefined, undefined, next);
       return next;
     });
-    fetch('/api/articles/action', {
+    guardedFetch('/api/articles/action', {
       method: 'POST',
       headers: getJsonHeaders(),
       body: JSON.stringify({ action: 'toggle-favorite', articleId })
@@ -774,7 +822,7 @@ export default function App() {
     setIsBriefingExpanded(true);
 
     try {
-      const res = await fetch('/api/ai/briefing', {
+      const res = await guardedFetch('/api/ai/briefing', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -959,6 +1007,9 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-black text-slate-100 font-sans selection:bg-[#0A84FF]/30 selection:text-white">
+      {/* Shared passphrase gate */}
+      {authRequired && !isUnlocked && <PassphraseGate onUnlocked={() => setIsUnlocked(true)} />}
+
       {/* Offline Indicator Toast */}
       <OfflineIndicator />
 
@@ -985,6 +1036,8 @@ export default function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        passphraseRequired={authRequired}
+        onLock={handleLockApp}
         feeds={feeds}
         onDeleteFeed={handleDeleteFeed}
         onUpdateFeed={handleUpdateFeed}
