@@ -2,7 +2,7 @@
   "auth": {
     "pin": "1984",
     "email": "rol.asthana@purvasa.uk",
-    "authRequired": true,
+    "authRequired": false,
     "sessionTokens": [
       "cee38c64c2a85bed170a5a83e46ce7c56535c132adbe89a7cb799060ea2fa609",
       "9f5b74ef2d15a5f1aacddba292bffeb32bb2b8806664e25c0760b3b8812d361d",
@@ -10,7 +10,13 @@
       "f494d7e5bc599953c798620b276cbbf308b35a1fd9801978720d63c9d1186a56",
       "63228b5d132988c98babfc681d0da40adebe3bc750777aec1e632a4fcd46ada1",
       "acd2de027092336fbd5d29ee9545dc59a484e4227f7c65926d61ee81de555326",
-      "4377a02287d4dfaf6d72e59d6ad9fe98ac9a4f80954fb144aa050523fb2cac15"
+      "4377a02287d4dfaf6d72e59d6ad9fe98ac9a4f80954fb144aa050523fb2cac15",
+      "f23adf931836e89a56c971311a9422c52467f7bc4cb0b746cef860747241024e",
+      "1e52ea36ca8940950377d382d8ff4c9d7a54c0f8169bf7a77b9c61c49bb225e1",
+      "7431a769b5c37fe792a5c73f011f7bced26ac2ac0c34527d37dfffe24f957e3d",
+      "ab86aaf833a27cbd52d70fa848c9ee208017e6947642399bdb4803f7149e0724",
+      "78d16fc61e7c8532135a91929ac7e00f0a7ff24b40959125d918f55e716c6f74",
+      "8873d679f2bd69c073ceb7c6a91169cd1cb108d3b8049363584f514c79c7f583"
     ]
   },
   "feeds": [
@@ -41,6 +47,21 @@
       ],
       "favicon": "https://www.google.com/s2/favicons?domain=simonwillison.net&sz=32",
       "lastFetched": "2026-10-08T16:47:49.334Z"
+    },
+    {
+      "id": "feed-1791673867044-17s9",
+      "title": "Dwarkesh Substack Publication",
+      "url": "https://dwarkesh.substack.com/feed",
+      "homeUrl": "https://www.dwarkesh.com",
+      "folder": "Culture & Books",
+      "tags": [
+        "newsletter",
+        "substack",
+        "dwarkesh",
+        "ai"
+      ],
+      "favicon": "https://www.google.com/s2/favicons?domain=dwarkesh.substack.com&sz=32",
+      "lastFetched": "2026-10-10T23:11:07.044Z"
     }
   ],
   "readArticleIds": [
@@ -195,11 +216,27 @@
     "https://inessential.com/2026/06/15/netnewswire-status.html",
     "https://inessential.com/2026/06/04/xcoders-justin-miller.html",
     "https://inessential.com/2026/03/03/i-tried-to-explain-what-i-do.html",
-    "https://inessential.com/2026/03/02/seattle-xcoders-talks.html"
+    "https://inessential.com/2026/03/02/seattle-xcoders-talks.html",
+    "https://simonwillison.net/2026/Oct/9/built-using-my-voice/",
+    "https://simonwillison.net/2026/Sep/27/2026-in-llms-so-far/",
+    "https://www.dwarkesh.com/p/si-sheppard",
+    "https://simonwillison.net/2026/Sep/21/jev/"
   ],
-  "starredArticleIds": [],
+  "starredArticleIds": [
+    "https://simonwillison.net/2026/Sep/21/jev/"
+  ],
   "cachedArticles": {},
-  "deletedArticleIds": [],
+  "deletedArticleIds": [
+    "https://simonwillison.net/2026/Oct/9/built-using-my-voice/",
+    "https://simonwillison.net/2026/Oct/7/claude-haiku-5-5/",
+    "https://simonwillison.net/2026/Oct/3/default-hard-budget-caps/",
+    "https://simonwillison.net/2026/Sep/29/openai-devday-2026-live-blog/",
+    "https://simonwillison.net/2026/Sep/27/2026-in-llms-so-far/",
+    "https://simonwillison.net/2026/Sep/22/opus-and-sol-and-luna/",
+    "https://simonwillison.net/2026/Sep/12/astra-running-routes/",
+    "https://simonwillison.net/2026/Sep/12/openai-agents-rubygems/",
+    "https://simonwillison.net/2026/Sep/8/on-navier-stokes/"
+  ],
   "archivedArticleIds": [],
   "deletedFeedUrls": [
     "feed-daringfireball",
