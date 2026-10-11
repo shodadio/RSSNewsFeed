@@ -23,7 +23,7 @@ import {
   Copy,
   Check,
   X,
-  Zap,
+  MoreHorizontal,
   Lock,
   AlertCircle
 } from 'lucide-react';
@@ -62,7 +62,14 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
   onPrevArticle = () => {},
   onNextArticle = () => {}
 }) => {
-  const [isReaderMode, setIsReaderMode] = useState(false);
+  // Reader View is a remembered preference rather than a per-article toggle.
+  const [isReaderMode, setIsReaderMode] = useState<boolean>(
+    () => localStorage.getItem('nnw_reader_mode') === '1'
+  );
+  // Single overflow menu: secondary reading actions used to sit permanently in the
+  // toolbar, so AI Summary and Read Aloud each appeared on two or three surfaces.
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const [scrapedData, setScrapedData] = useState<ScrapedArticle | null>(null);
   const [isScraping, setIsScraping] = useState(false);
   const [scrapeError, setScrapeError] = useState<string | null>(null);
@@ -105,31 +112,10 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
   const [showSummary, setShowSummary] = useState(false);
   const [hasCopiedSummary, setHasCopiedSummary] = useState(false);
 
-  // Swipe right to go back
-  const touchStartXRef = useRef(0);
-  const touchStartYRef = useRef(0);
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartXRef.current = e.touches[0].clientX;
-    touchStartYRef.current = e.touches[0].clientY;
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    const deltaX = e.changedTouches[0].clientX - touchStartXRef.current;
-    const deltaY = e.changedTouches[0].clientY - touchStartYRef.current;
-    // Edge-swipe right: started within 90px of left edge and moved right by > 50px
-    if (touchStartXRef.current < 90 && deltaX > 50 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
-      if (onBackToTimeline) {
-        onBackToTimeline();
-      }
-    }
-  };
-
-  // Reset reader mode and speech when article changes
+  // Reset speech / summary state when the article changes. Reader mode is a
+  // remembered preference so it deliberately survives the switch.
   useEffect(() => {
-    setIsReaderMode(false);
-    setScrapedData(null);
-    setScrapeError(null);
+    setShowMoreMenu(false);
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -153,6 +139,30 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
       }
     };
   }, []);
+
+  // Remember the reader-mode preference across articles and sessions.
+  useEffect(() => {
+    localStorage.setItem('nnw_reader_mode', isReaderMode ? '1' : '0');
+  }, [isReaderMode]);
+
+  // Dismiss the ⋯ menu on outside click or Escape.
+  useEffect(() => {
+    if (!showMoreMenu) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setShowMoreMenu(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowMoreMenu(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showMoreMenu]);
 
   // Candidate hero image URL from scraper or feed enclosure
   const heroBannerUrl = (isReaderMode && scrapedData?.leadImage) || article?.imageUrl || '';
@@ -319,35 +329,40 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
     }
   };
 
-  const handleToggleReaderMode = async () => {
+  const loadReaderContent = async () => {
     if (!article) return;
-    if (isReaderMode) {
-      setIsReaderMode(false);
-      return;
-    }
-
-    setIsReaderMode(true);
-    if (!scrapedData) {
-      setIsScraping(true);
-      setScrapeError(null);
-      try {
-        const res = await fetch('/api/feeds/scrape-article', {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: JSON.stringify({ url: article.link })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          setScrapedData(data);
-        } else {
-          setScrapeError(data.error || 'Failed to scrape full web page.');
-        }
-      } catch (err: any) {
-        setScrapeError('Network error extracting full article body.');
-      } finally {
-        setIsScraping(false);
+    setIsScraping(true);
+    setScrapeError(null);
+    try {
+      const res = await fetch('/api/feeds/scrape-article', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ url: article.link })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setScrapedData(data);
+      } else {
+        setScrapeError(data.error || 'Failed to scrape full web page.');
       }
+    } catch (err: any) {
+      setScrapeError('Network error extracting full article body.');
+    } finally {
+      setIsScraping(false);
     }
+  };
+
+  // Reader mode is persistent, so apply it to every newly opened article.
+  useEffect(() => {
+    if (!isReaderMode || !article) return;
+    setScrapedData(null);
+    setScrapeError(null);
+    loadReaderContent();
+  }, [article?.id, isReaderMode]);
+
+  const handleToggleReaderMode = () => {
+    if (!article) return;
+    setIsReaderMode((v) => !v);
   };
 
   const handleShare = async () => {
@@ -514,8 +529,6 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
 
   return (
     <main
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
       className="w-full flex-1 bg-slate-950 flex flex-col h-full overflow-hidden select-text relative"
     >
       {/* Top Reading Toolbar with iOS Safe Area padding */}
@@ -539,98 +552,18 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
           </div>
         </div>
 
-        {/* Action icons */}
+        {/* One primary action row. Star / Read / Share / Open are the actions people
+            reach for constantly; everything secondary is behind ⋯ so no action is
+            duplicated across the toolbar, an inline callout and a floating bar. */}
         <div className="flex items-center gap-1 shrink-0">
-          {/* AI 1-Sentence Summary Button with Tooltip */}
-          <div className="relative group">
-            <button
-              onClick={handleSummarizeArticle}
-              disabled={isSummarizing}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition ${
-                isSummarizing
-                  ? 'bg-purple-950/80 text-purple-300 border border-purple-500/40 cursor-wait'
-                  : showSummary && currentSummary
-                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold shadow-sm shadow-purple-500/30'
-                  : 'text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800 hover:border-purple-500/40'
-              }`}
-              title="Generate 1-sentence summary with Gemini"
-              aria-label="Generate 1-sentence summary with Gemini"
-            >
-              {isSummarizing ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
-              ) : (
-                <Zap className={`w-3.5 h-3.5 ${showSummary && currentSummary ? 'text-amber-300 fill-amber-300' : 'text-purple-400 fill-purple-400/20'}`} />
-              )}
-              <span className="hidden sm:inline">
-                {isSummarizing ? 'Summarizing...' : showSummary && currentSummary ? 'Summary' : 'AI Summary'}
-              </span>
-            </button>
-
-            {/* Hover Tooltip */}
-            <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block z-50 pointer-events-none whitespace-nowrap bg-slate-900 border border-purple-500/30 text-purple-200 text-[11px] px-2.5 py-1 rounded-md shadow-lg shadow-black/60">
-              {currentSummary ? (showSummary ? 'Hide 1-sentence summary' : 'Show 1-sentence summary') : 'Gemini 1-Sentence Summary'}
-            </div>
-          </div>
-
-          {/* Reader Mode Button */}
-          <button
-            onClick={handleToggleReaderMode}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition ${
-              isReaderMode
-                ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
-                : 'text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
-            }`}
-            title="Toggle Reader Mode / Full Extractor"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Reader View</span>
-          </button>
-
-          {/* Font Size Controls */}
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
-            <button
-              onClick={handleDecreaseFontSize}
-              className="px-2 py-1.5 text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition border-r border-slate-800 font-medium"
-              title="Decrease font size (A-)"
-              aria-label="Decrease font size"
-            >
-              A-
-            </button>
-            <span className="px-1.5 text-[10px] text-slate-400 font-mono uppercase hidden sm:inline">
-              {fontSize}
-            </span>
-            <button
-              onClick={handleIncreaseFontSize}
-              className="px-2 py-1.5 text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition border-l border-slate-800 font-medium"
-              title="Increase font size (A+)"
-              aria-label="Increase font size"
-            >
-              A+
-            </button>
-          </div>
-
-          {/* Read Aloud Button */}
-          <button
-            onClick={isSpeaking ? (isPaused ? handleResumeSpeech : handlePauseSpeech) : handleStartSpeech}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition ${
-              isSpeaking
-                ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm animate-pulse'
-                : 'text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
-            }`}
-            title={isSpeaking ? (isPaused ? 'Resume reading' : 'Pause reading') : 'Read Aloud'}
-          >
-            <Volume2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">
-              {isSpeaking ? (isPaused ? 'Resume' : 'Listening...') : 'Read Aloud'}
-            </span>
-          </button>
-
           {/* Star Button */}
           <button
             onClick={() => {
               onToggleStar();
             }}
-            className={`p-2 rounded-lg transition ${
+            aria-pressed={isStarred}
+            aria-label={isStarred ? 'Unstar article' : 'Star article'}
+            className={`p-2.5 rounded-lg transition ${
               isStarred
                 ? 'text-amber-400 hover:text-amber-300'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -645,7 +578,9 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
             onClick={() => {
               onToggleRead();
             }}
-            className={`p-2 rounded-lg transition ${
+            aria-pressed={isRead}
+            aria-label={isRead ? 'Mark as unread' : 'Mark as read'}
+            className={`p-2.5 rounded-lg transition ${
               isRead ? 'text-emerald-400' : 'text-slate-400 hover:text-white hover:bg-slate-800'
             }`}
             title={isRead ? 'Mark as Unread' : 'Mark as Read'}
@@ -658,7 +593,8 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
             onClick={() => {
               handleShare();
             }}
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
+            className="p-2.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
+            aria-label="Share article link"
             title="Share article link"
           >
             <Share2 className="w-4 h-4" />
@@ -669,11 +605,126 @@ export const ArticleView: React.FC<ArticleViewProps> = ({
             href={article.link}
             target="_blank"
             rel="noopener noreferrer"
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
+            className="p-2.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
+            aria-label="Open original webpage in a new tab"
             title="Open original webpage in new tab"
           >
             <ExternalLink className="w-4 h-4" />
           </a>
+
+          {/* ⋯ More: Reader View, AI Summary, Read Aloud, Text Size */}
+          <div className="relative" ref={moreMenuRef}>
+            <button
+              onClick={() => setShowMoreMenu((v) => !v)}
+              aria-expanded={showMoreMenu}
+              aria-haspopup="menu"
+              aria-label="More reading options"
+              title="More reading options"
+              className={`p-2.5 rounded-lg transition ${
+                showMoreMenu
+                  ? 'bg-slate-800 text-white'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+
+            {showMoreMenu && (
+              <div
+                role="menu"
+                aria-label="Reading options"
+                className="absolute right-0 top-full mt-2 z-50 w-64 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl shadow-black/60 p-2 text-slate-100"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    handleToggleReaderMode();
+                    setShowMoreMenu(false);
+                  }}
+                  className="w-full min-h-[44px] flex items-center gap-3 px-3 rounded-xl hover:bg-slate-800 transition text-left"
+                >
+                  <BookOpen className={`w-4 h-4 shrink-0 ${isReaderMode ? 'text-amber-400' : 'text-slate-400'}`} />
+                  <span className="flex-1 text-xs font-semibold">
+                    {isReaderMode ? 'Exit Reader View' : 'Reader View'}
+                  </span>
+                  {isReaderMode && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    handleSummarizeArticle();
+                    setShowMoreMenu(false);
+                  }}
+                  disabled={isSummarizing}
+                  className="w-full min-h-[44px] flex items-center gap-3 px-3 rounded-xl hover:bg-slate-800 transition text-left disabled:opacity-60"
+                >
+                  {isSummarizing ? (
+                    <Loader2 className="w-4 h-4 shrink-0 animate-spin text-purple-400" />
+                  ) : (
+                    <Sparkles
+                      className={`w-4 h-4 shrink-0 ${currentSummary ? 'text-purple-400' : 'text-slate-400'}`}
+                    />
+                  )}
+                  <span className="flex-1 text-xs font-semibold">
+                    {isSummarizing
+                      ? 'Summarizing...'
+                      : currentSummary
+                      ? showSummary
+                        ? 'Hide AI Summary'
+                        : 'Show AI Summary'
+                      : 'AI Summary'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (isSpeaking) {
+                      handleStopSpeech();
+                    } else {
+                      handleStartSpeech();
+                    }
+                    setShowMoreMenu(false);
+                  }}
+                  className="w-full min-h-[44px] flex items-center gap-3 px-3 rounded-xl hover:bg-slate-800 transition text-left"
+                >
+                  <Volume2 className={`w-4 h-4 shrink-0 ${isSpeaking ? 'text-emerald-400' : 'text-slate-400'}`} />
+                  <span className="flex-1 text-xs font-semibold">
+                    {isSpeaking ? 'Stop Reading Aloud' : 'Read Aloud'}
+                  </span>
+                </button>
+
+                <div className="mt-1 pt-2 border-t border-slate-800 flex items-center justify-between px-3">
+                  <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-2">
+                    <Type className="w-3.5 h-3.5" />
+                    <span>Text Size</span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleDecreaseFontSize}
+                      aria-label="Decrease text size"
+                      className="w-11 h-11 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold transition"
+                    >
+                      A-
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleIncreaseFontSize}
+                      aria-label="Increase text size"
+                      className="w-11 h-11 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold transition"
+                    >
+                      A+
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Calendar,
@@ -22,9 +22,10 @@ import {
   Layers,
   BookOpen,
   Tag,
-  Trash2
+  Trash2,
+  MoreHorizontal
 } from 'lucide-react';
-import { Feed, SmartFilter, AIBriefing } from '../types';
+import { Feed, SmartFilter, AIBriefing, DEFAULT_FOLDER } from '../types';
 import { PWAInstallGuide } from './PWAInstallGuide';
 import { AIBriefCard } from './AIBriefCard';
 import { formatTag, isMetaTag } from '../utils/tagUtils';
@@ -48,6 +49,8 @@ interface SidebarProps {
   starredCount: number;
   archivedCount: number;
   isMobile?: boolean;
+  /** ISO timestamp of the last completed refresh, for the honest header status. */
+  lastUpdated?: string | null;
   aiBriefing?: AIBriefing | null;
   isGeneratingBriefing?: boolean;
   isBriefingExpanded?: boolean;
@@ -80,7 +83,12 @@ const FolderFeedsList: React.FC<FolderFeedsListProps> = ({
         const count = unreadCountByFeed[feed.id] || 0;
 
         return (
-          <div key={feed.id} className="relative">
+          <div
+            key={feed.id}
+            className={`relative flex items-center min-h-[44px] transition ${
+              active ? 'bg-[#0A84FF]' : 'hover:bg-white/[0.04]'
+            }`}
+          >
             <button
               onClick={() => {
                 onSelectFilter({ type: 'feed', id: feed.id, title: feed.title });
@@ -89,9 +97,7 @@ const FolderFeedsList: React.FC<FolderFeedsListProps> = ({
                 e.preventDefault();
                 onOpenFeedMenu(feed);
               }}
-              className={`w-full flex items-center justify-between pl-9 pr-3.5 min-h-[44px] transition text-left select-none ${
-                active ? 'bg-[#0A84FF] text-white font-semibold' : 'text-slate-200 hover:bg-white/[0.04]'
-              }`}
+              className="flex-1 min-w-0 flex items-center justify-between pl-9 pr-1 min-h-[44px] transition text-left select-none"
             >
               <div className="flex items-center gap-2.5 truncate pr-2">
                 {feed.favicon ? (
@@ -106,12 +112,34 @@ const FolderFeedsList: React.FC<FolderFeedsListProps> = ({
                 ) : (
                   <span className="w-1.5 h-1.5 rounded-full bg-[#8E8E93] shrink-0" />
                 )}
-                <span className="truncate">{feed.title}</span>
+                <span className={`truncate ${active ? 'text-white font-semibold' : 'text-slate-200'}`}>
+                  {feed.title}
+                </span>
               </div>
 
               <span className={`text-xs font-normal shrink-0 ${active ? 'text-white/80' : 'text-[#8E8E93]'}`}>
                 {count > 0 ? count : ''}
               </span>
+            </button>
+
+            {/* Visible affordance for the feed action sheet. It used to be reachable
+                only through a 450 ms long-press or right-click, neither of which iOS
+                fires — so Unsubscribe and Move to Folder were desktop-only secrets. */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenFeedMenu(feed);
+              }}
+              aria-label={`Options for ${feed.title}`}
+              aria-haspopup="dialog"
+              className={`shrink-0 p-2 mr-2 rounded-lg transition ${
+                active
+                  ? 'text-white/90 hover:bg-white/15'
+                  : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.08]'
+              }`}
+            >
+              <MoreHorizontal className="w-4 h-4 stroke-[1.5]" />
             </button>
           </div>
         );
@@ -137,6 +165,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   starredCount,
   archivedCount = 0,
   isMobile = false,
+  lastUpdated = null,
   aiBriefing = null,
   isGeneratingBriefing = false,
   isBriefingExpanded = true,
@@ -150,6 +179,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [showMovePicker, setShowMovePicker] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Live relative timestamp for the header. "Updated Just Now" was hard-coded and
+  // therefore lied as soon as the app had been open for a while.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const updatedLabel = useMemo(() => {
+    if (!lastUpdated) return 'Not updated yet';
+    const ms = now - new Date(lastUpdated).getTime();
+    if (!Number.isFinite(ms)) return 'Not updated yet';
+    const min = Math.floor(ms / 60000);
+    if (min < 1) return 'Updated just now';
+    if (min < 60) return `Updated ${min}m ago`;
+    const hrs = Math.floor(min / 60);
+    if (hrs < 24) return `Updated ${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `Updated ${days}d ago`;
+  }, [lastUpdated, now]);
+
   const toggleFolder = (folderName: string) => {
     setCollapsedFolders((prev) => ({
       ...prev,
@@ -158,14 +208,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const folderNames = useMemo(
-    () => Array.from(new Set(feeds.map((f) => f.folder || 'Feeds'))),
+    () => Array.from(new Set(feeds.map((f) => f.folder || DEFAULT_FOLDER))),
     [feeds]
   );
 
   // Group feeds by folder
   const groupedFeeds: Record<string, Feed[]> = {};
   feeds.forEach((feed) => {
-    const folder = feed.folder || 'Feeds';
+    const folder = feed.folder || DEFAULT_FOLDER;
     if (!groupedFeeds[folder]) groupedFeeds[folder] = [];
     groupedFeeds[folder].push(feed);
   });
@@ -213,7 +263,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-white tracking-tight">Feeds</h1>
-            <p className="text-xs text-[#8E8E93] mt-0.5">Updated Just Now</p>
+            <p className="text-xs text-[#8E8E93] mt-0.5">{updatedLabel}</p>
           </div>
           <div className="flex items-center gap-2">
             <PWAInstallGuide />
@@ -332,6 +382,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="bg-[#1C1C1E] rounded-2xl border border-white/[0.08] overflow-hidden shadow-sm">
           <div className="px-3.5 pt-3 pb-1.5 flex items-center justify-between text-[13px] font-bold text-[#8E8E93] uppercase tracking-wider">
             <span>Subscriptions</span>
+            <button
+              type="button"
+              onClick={onOpenAddFeed}
+              aria-label="Add a feed"
+              title="Add a feed"
+              className="p-1 -mr-1 rounded-lg text-[#0A84FF] hover:text-white hover:bg-white/[0.08] transition"
+            >
+              <Plus className="w-4 h-4 stroke-[2]" />
+            </button>
           </div>
           <div className="divide-y divide-white/[0.06]">
             {Object.entries(groupedFeeds).map(([folderName, folderFeeds]) => {
@@ -500,7 +559,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className="text-left">
                       <div className="font-semibold">Move to Folder</div>
                       <div className="text-[10px] text-[#8E8E93]">
-                        Currently: {feedActionTarget.folder || 'Feeds'}
+                        Currently: {feedActionTarget.folder || DEFAULT_FOLDER}
                       </div>
                     </div>
                   </button>
@@ -508,7 +567,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className="px-3 pb-1">
                       <FolderPicker
                         folders={folderNames}
-                        current={feedActionTarget.folder || 'Feeds'}
+                        current={feedActionTarget.folder || DEFAULT_FOLDER}
                         onSelect={(folder) => {
                           onUpdateFeed(feedActionTarget.id, { folder });
                           setShowMovePicker(false);

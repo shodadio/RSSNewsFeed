@@ -23,7 +23,7 @@ import {
   Unlock,
   Layers
 } from 'lucide-react';
-import { Feed } from '../types';
+import { Feed, DEFAULT_FOLDER } from '../types';
 import { getStorageMode, setStorageMode, saveLocalFeeds } from '../utils/storage';
 import { getAuthHeaders } from '../utils/api';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -69,7 +69,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
 
   const folderNames = useMemo(
-    () => Array.from(new Set(feeds.map((f) => f.folder || 'Feeds'))),
+    () => Array.from(new Set(feeds.map((f) => f.folder || DEFAULT_FOLDER))),
     [feeds]
   );
 
@@ -449,7 +449,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         title="Move to folder"
                       >
                         <Layers className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{feed.folder || 'Feeds'}</span>
+                        <span className="truncate">{feed.folder || DEFAULT_FOLDER}</span>
                       </button>
                     )}
                     <button
@@ -465,7 +465,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="px-2.5 pb-2.5 border-t border-slate-800/70">
                     <FolderPicker
                       folders={folderNames}
-                      current={feed.folder || 'Feeds'}
+                      current={feed.folder || DEFAULT_FOLDER}
                       onSelect={(folder) => {
                         onUpdateFeed(feed.id, { folder });
                         setEditingFolderId(null);

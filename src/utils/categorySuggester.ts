@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { DEFAULT_FOLDER } from '../types';
+
 export interface CategorySuggestionResult {
   primaryCategory: string;
   suggestedCategories: string[];
@@ -345,12 +347,12 @@ export function suggestCategoriesAndTags(
     if (cleanUrl.includes('substack')) {
       suggestedCategories.push('Newsletters');
     } else {
-      suggestedCategories.push('Subscriptions');
+      suggestedCategories.push(DEFAULT_FOLDER);
     }
     derivedTags.add('rss');
   }
 
-  const primaryCategory = curated ? curated.folder : (suggestedCategories[0] || 'Subscriptions');
+  const primaryCategory = curated ? curated.folder : (suggestedCategories[0] || DEFAULT_FOLDER);
 
   return {
     primaryCategory,

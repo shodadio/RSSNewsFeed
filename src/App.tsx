@@ -12,7 +12,7 @@ import { AddFeedModal } from './components/AddFeedModal';
 import { SettingsModal } from './components/SettingsModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { UndoToast } from './components/UndoToast';
-import { Feed, Article, SmartFilter, AIBriefing } from './types';
+import { Feed, Article, SmartFilter, AIBriefing, DEFAULT_FOLDER } from './types';
 import {
   getLocalFeeds,
   saveLocalFeeds,
@@ -130,6 +130,8 @@ export default function App() {
   const [deletedArticleIds, setDeletedArticleIds] = useState<Set<string>>(() => initialArticleState.deletedArticleIds);
   const [deletedFeedUrls, setDeletedFeedUrls] = useState<Set<string>>(() => getLocalDeletedFeedUrls());
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // Last completed refresh, surfaced as an honest relative time in the sidebar header.
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
 
   // Single-slot undo affordance for destructive actions
   const [pendingUndo, setPendingUndo] = useState<PendingUndo | null>(null);
@@ -398,6 +400,7 @@ export default function App() {
     });
 
     setIsRefreshing(false);
+    setLastRefreshedAt(new Date().toISOString());
   }, [feeds, syncStateWithServer]);
 
   // Initial load on mount
@@ -686,7 +689,7 @@ export default function App() {
           return targetFeed ? article.feedUrl === targetFeed.url : true;
         }
         case 'folder': {
-          const folderFeeds = feeds.filter((f) => (f.folder || 'Feeds') === activeFilter.id);
+          const folderFeeds = feeds.filter((f) => (f.folder || DEFAULT_FOLDER) === activeFilter.id);
           const urls = new Set(folderFeeds.map((f) => f.url));
           return urls.has(article.feedUrl);
         }
@@ -883,7 +886,7 @@ export default function App() {
   const archivedCount = archivedArticleIds.size;
 
   const existingFolders = useMemo(() => {
-    const set = new Set(feeds.map((f) => f.folder || 'Subscriptions'));
+    const set = new Set(feeds.map((f) => f.folder || DEFAULT_FOLDER));
     return Array.from(set);
   }, [feeds]);
 
@@ -978,6 +981,7 @@ export default function App() {
             todayCount={todayCount}
             starredCount={starredCount}
             archivedCount={archivedCount}
+            lastUpdated={lastRefreshedAt}
             aiBriefing={aiBriefing}
             isGeneratingBriefing={isGeneratingBriefing}
             isBriefingExpanded={isBriefingExpanded}
@@ -1074,6 +1078,7 @@ export default function App() {
                   todayCount={todayCount}
                   starredCount={starredCount}
                   archivedCount={archivedCount}
+                  lastUpdated={lastRefreshedAt}
                   isMobile={true}
                   aiBriefing={aiBriefing}
                   isGeneratingBriefing={isGeneratingBriefing}

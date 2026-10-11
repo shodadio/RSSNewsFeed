@@ -17,11 +17,13 @@ import {
   Layers,
   Search,
   RotateCw,
+  Sliders,
   Globe,
   Loader2
 } from 'lucide-react';
-import { Feed } from '../types';
-import { suggestCategoriesAndTags } from '../utils/categorySuggester';
+import { Feed, DEFAULT_FOLDER } from '../types';
+import { suggestCategoriesAndTags, CANONICAL_FOLDERS } from '../utils/categorySuggester';
+import { FolderPicker } from './FolderPicker';
 import { getAuthHeaders } from '../utils/api';
 
 interface AddFeedModalProps {
@@ -41,16 +43,6 @@ interface RecommendedFeedItem {
   folder: string;
   favicon?: string;
 }
-
-const POPULAR_SUGGESTIONS = [
-  { title: 'The Verge', url: 'https://www.theverge.com/rss/index.xml', folder: 'Tech & Architecture' },
-  { title: 'Ars Technica', url: 'https://feeds.arstechnica.com/arstechnica/index', folder: 'Tech & Architecture' },
-  { title: 'Hacker News', url: 'https://news.ycombinator.com/rss', folder: 'Developer News' },
-  { title: 'MacRumors', url: 'https://feeds.macrumors.com/MacRumors-All', folder: 'Indie Mac & Swift' },
-  { title: '9to5Mac', url: 'https://9to5mac.com/feed/', folder: 'Indie Mac & Swift' },
-  { title: 'Demis Hassabis', url: 'https://demishassabis.substack.com/feed', folder: 'AI & Machine Learning' },
-  { title: 'Swift.org Blog', url: 'https://www.swift.org/atom.xml', folder: 'Indie Mac & Swift' }
-];
 
 export const AddFeedModal: React.FC<AddFeedModalProps> = ({
   isOpen,
@@ -88,6 +80,39 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
 
   // Set of current existing URLs in user's library
   const currentLibraryUrls = useMemo(() => new Set(existingFeedUrls), [existingFeedUrls]);
+
+  // Review-before-add: recommended results used to be added straight from a one-tap
+  // "Add", with a default folder and no tags. Every result now carries its own draft
+  // folder/tags, so bulk add is just the reviewed list.
+  const [reviewUrls, setReviewUrls] = useState<Set<string>>(new Set());
+  const [resultOverrides, setResultOverrides] = useState<
+    Record<string, { folder?: string; tags?: string[] }>
+  >({});
+
+  const toggleReviewUrl = (url: string) => {
+    setReviewUrls((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url); else next.add(url);
+      return next;
+    });
+  };
+
+  const updateResultDraft = (url: string, patch: { folder?: string; tags?: string[] }) => {
+    setResultOverrides((prev) => ({ ...prev, [url]: { ...prev[url], ...patch } }));
+  };
+
+  const resultTagsFor = (item: { folder: string }) => {
+    const slug = (item.folder || DEFAULT_FOLDER)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    return slug ? [slug] : [];
+  };
+
+  const draftFolderFor = (item: RecommendedFeedItem) =>
+    resultOverrides[item.url]?.folder ?? (item.folder || DEFAULT_FOLDER);
+  const draftTagsFor = (item: RecommendedFeedItem) =>
+    resultOverrides[item.url]?.tags ?? resultTagsFor(item);
 
   // Real-time suggestions based on URL structure and title
   const realTimeSuggestions = useMemo(() => {
@@ -180,8 +205,8 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
       title: item.title,
       url: item.url,
       homeUrl: item.homeUrl || item.url,
-      folder: item.folder || 'Tech & Architecture',
-      tags: ['tech', item.folder.toLowerCase().replace(/[^a-z0-9]/g, '-')],
+      folder: draftFolderFor(item),
+      tags: draftTagsFor(item),
       favicon: item.favicon || `https://www.google.com/s2/favicons?domain=${new URL(item.homeUrl || item.url).hostname}&sz=32`,
       lastFetched: new Date().toISOString()
     };
@@ -208,8 +233,8 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
         title: item.title,
         url: item.url,
         homeUrl: item.homeUrl || item.url,
-        folder: item.folder || 'Tech & Architecture',
-        tags: ['tech', 'recommended'],
+        folder: draftFolderFor(item),
+        tags: draftTagsFor(item),
         favicon: item.favicon || (domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32` : undefined),
         lastFetched: new Date().toISOString()
       };
@@ -254,7 +279,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
       }
 
       // Combine user choice or automatic server recommendation
-      const autoCategory = data.primaryCategory || realTimeSuggestions?.primaryCategory || 'Subscriptions';
+      const autoCategory = data.primaryCategory || realTimeSuggestions?.primaryCategory || DEFAULT_FOLDER;
       const finalFolder = newFolderName.trim() || folder.trim() || autoCategory;
 
       // Combine chosen tags or automatic server suggested tags
@@ -293,12 +318,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSelectSuggestion = (s: typeof POPULAR_SUGGESTIONS[0]) => {
-    setUrl(s.url);
-    setTitle(s.title);
-    setFolder(s.folder);
   };
 
   const unaddedCount = recommendedFeeds.filter(
@@ -458,12 +477,22 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
                   const isInLibrary = currentLibraryUrls.has(feed.url);
                   const isNewlyAdded = justAddedUrls.has(feed.url);
                   const isAdded = isInLibrary || isNewlyAdded;
+                  const isReviewing = reviewUrls.has(feed.url);
+                  const draftFolder = draftFolderFor(feed);
+                  const draftTags = draftTagsFor(feed);
+                  const tagOptions = Array.from(
+                    new Set([
+                      ...draftTags,
+                      ...suggestCategoriesAndTags(feed.url, feed.title).suggestedTags
+                    ])
+                  ).slice(0, 8);
 
                   return (
                     <div
                       key={idx}
-                      className="bg-slate-950 border border-slate-800 hover:border-slate-700/80 rounded-xl p-3 flex items-center justify-between gap-3 text-xs transition"
+                      className="bg-slate-950 border border-slate-800 hover:border-slate-700/80 rounded-xl text-xs transition overflow-hidden"
                     >
+                      <div className="p-3 flex items-center justify-between gap-3">
                       <div className="flex items-start gap-3 min-w-0 flex-1">
                         <div className="w-6 h-6 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center shrink-0 mt-0.5 overflow-hidden">
                           {feed.favicon ? (
@@ -483,7 +512,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
                           <div className="font-bold text-white truncate flex items-center gap-1.5">
                             <span className="truncate">{feed.title}</span>
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-850 text-amber-400 font-mono shrink-0">
-                              {feed.folder}
+                              {draftFolder}
                             </span>
                           </div>
                           <div className="text-[11px] text-slate-400 line-clamp-1 mt-0.5">
@@ -502,16 +531,75 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
                             <span>{isNewlyAdded ? 'Added' : 'In Library'}</span>
                           </span>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleAddSingleRecommended(feed)}
-                            className="h-8 px-3 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 rounded-lg font-bold text-xs transition inline-flex items-center gap-1 shadow-sm active:scale-95"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Add</span>
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => toggleReviewUrl(feed.url)}
+                              aria-expanded={isReviewing}
+                              aria-label={`Choose folder and tags for ${feed.title}`}
+                              title="Choose folder and tags before adding"
+                              className={`h-8 px-2 rounded-lg border text-xs font-semibold transition inline-flex items-center gap-1 ${
+                                isReviewing
+                                  ? 'bg-slate-800 border-slate-700 text-white'
+                                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                              }`}
+                            >
+                              <Sliders className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Review</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleAddSingleRecommended(feed)}
+                              className="h-8 px-3 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 rounded-lg font-bold text-xs transition inline-flex items-center gap-1 shadow-sm active:scale-95"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Add</span>
+                            </button>
+                          </div>
                         )}
                       </div>
+                      </div>
+
+                      {isReviewing && !isAdded && (
+                        <div className="px-3 pb-3 pt-2.5 border-t border-slate-800 space-y-3">
+                          <FolderPicker
+                            folders={Array.from(new Set([...existingFolders, ...CANONICAL_FOLDERS]))}
+                            current={draftFolder}
+                            onSelect={(folder) => updateResultDraft(feed.url, { folder })}
+                          />
+                          <div>
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider block mb-1.5">
+                              Tags
+                            </span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {tagOptions.map((t) => {
+                                const on = draftTags.includes(t);
+                                return (
+                                  <button
+                                    type="button"
+                                    key={t}
+                                    aria-pressed={on}
+                                    onClick={() =>
+                                      updateResultDraft(feed.url, {
+                                        tags: on
+                                          ? draftTags.filter((x) => x !== t)
+                                          : [...draftTags, t]
+                                      })
+                                    }
+                                    className={`px-2 py-0.5 rounded-md text-[11px] font-mono transition ${
+                                      on
+                                        ? 'bg-blue-500 text-white font-semibold shadow-sm'
+                                        : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800'
+                                    }`}
+                                  >
+                                    #{t}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -624,30 +712,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
         ) : (
           /* ================= MODE: DIRECT URL ================= */
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Quick banner to jump to Google Search Recommended Feeds */}
-            <div className="p-3 rounded-xl bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/5 border border-amber-500/20 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300 shrink-0">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-bold text-white truncate">New here? Populate your library</div>
-                  <div className="text-[11px] text-slate-400 truncate">Popular tech feeds discovered via Google Search</div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('recommended');
-                  if (recommendedFeeds.length === 0) fetchRecommendedFeeds();
-                }}
-                className="h-8 px-3.5 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs shadow-md inline-flex items-center gap-1.5 shrink-0 transition"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Add Recommended</span>
-              </button>
-            </div>
-
             <div>
               <label className="h-5 flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-1">
                 <Rss className="w-3.5 h-3.5 text-amber-400" />
@@ -751,11 +815,14 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
               <div>
                 <label className="h-5 flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-1">
                   <Layers className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Folder Category</span>
+                  <span>Folder</span>
                 </label>
                 <select
                   value={folder}
-                  onChange={(e) => setFolder(e.target.value)}
+                  onChange={(e) => {
+                    setFolder(e.target.value);
+                    if (e.target.value) setNewFolderName('');
+                  }}
                   className="w-full h-10 bg-slate-950 border border-slate-800 rounded-xl px-3 text-xs text-white focus:outline-none focus:border-amber-500/50 transition"
                 >
                   <option value="">
@@ -763,7 +830,7 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
                       ? `Auto: ${realTimeSuggestions.primaryCategory}`
                       : 'Select Folder...'}
                   </option>
-                  {existingFolders.map((f) => (
+                  {Array.from(new Set([DEFAULT_FOLDER, ...existingFolders])).map((f) => (
                     <option key={f} value={f}>
                       {f}
                     </option>
@@ -774,17 +841,31 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
               <div>
                 <label className="h-5 flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-1">
                   <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Or New Category</span>
+                  <span>New Folder</span>
                 </label>
                 <input
                   type="text"
                   value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onChange={(e) => {
+                    setNewFolderName(e.target.value);
+                    if (e.target.value.trim()) setFolder('');
+                  }}
                   placeholder="e.g. AI Research"
                   className="w-full h-10 bg-slate-950 border border-slate-800 rounded-xl px-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 transition"
                 />
               </div>
             </div>
+
+            <p className="text-[11px] text-slate-400">
+              This feed will be filed under{' '}
+              <span className="font-semibold text-amber-300">
+                {newFolderName.trim() ||
+                  folder.trim() ||
+                  realTimeSuggestions?.primaryCategory ||
+                  DEFAULT_FOLDER}
+              </span>
+              . You can change that any time from Settings.
+            </p>
 
             {error && (
               <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
@@ -792,25 +873,6 @@ export const AddFeedModal: React.FC<AddFeedModalProps> = ({
                 <span>{error}</span>
               </div>
             )}
-
-            {/* Quick popular suggestions */}
-            <div className="pt-1">
-              <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1 mb-2">
-                <Sparkles className="w-3 h-3 text-amber-400" /> Quick Popular Feeds:
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {POPULAR_SUGGESTIONS.map((s) => (
-                  <button
-                    type="button"
-                    key={s.title}
-                    onClick={() => handleSelectSuggestion(s)}
-                    className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] transition"
-                  >
-                    {s.title}
-                  </button>
-                ))}
-              </div>
-            </div>
 
             <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-800/80">
               <button

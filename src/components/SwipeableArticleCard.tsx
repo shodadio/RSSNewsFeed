@@ -321,13 +321,32 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
             <button
               type="button"
               onClick={(e) => onToggleStar(article.id, e)}
+              aria-pressed={isStarred}
+              aria-label={isStarred ? 'Remove from starred' : 'Add to starred'}
               className={`p-1 rounded transition ${
                 isStarred
                   ? 'text-[#0A84FF] hover:text-[#0A84FF]/80'
-                  : 'text-[#8E8E93] hover:text-white opacity-40 group-hover:opacity-100'
+                  : 'text-[#8E8E93] hover:text-white'
               }`}
             >
               <Star className={`w-3.5 h-3.5 stroke-[1.5] ${isStarred ? 'fill-[#0A84FF]' : ''}`} />
+            </button>
+
+            {/* Visible affordance for the long-press action sheet, which was otherwise
+                undiscoverable (and unreachable whenever a click was interpreted as a tap). */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowLongPressSheet(true);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              aria-label={`More actions for ${article.title}`}
+              aria-haspopup="dialog"
+              className="p-1 rounded text-[#8E8E93] hover:text-white hover:bg-white/[0.08] transition"
+            >
+              <MoreHorizontal className="w-3.5 h-3.5 stroke-[1.5]" />
             </button>
           </div>
 

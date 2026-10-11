@@ -66,6 +66,7 @@ export const MobileReaderBar: React.FC<MobileReaderBarProps> = ({
             onToggleStar();
           }}
           className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl transition active:scale-95 active:bg-slate-800/80"
+          aria-pressed={isStarred}
           aria-label={isStarred ? 'Unstar article' : 'Star article'}
           title={isStarred ? 'Starred' : 'Star article'}
         >
@@ -82,6 +83,7 @@ export const MobileReaderBar: React.FC<MobileReaderBarProps> = ({
             onToggleRead();
           }}
           className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl transition active:scale-95 active:bg-slate-800/80"
+          aria-pressed={isRead}
           aria-label={isRead ? 'Mark as unread' : 'Mark as read'}
           title={isRead ? 'Read' : 'Unread'}
         >

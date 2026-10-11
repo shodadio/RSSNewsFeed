@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * Fallback folder for feeds that have not been filed by the user or the
+ * categorizer. Sidebar grouping, Settings and the ServerSync paths must all
+ * agree on this single name so one concept never appears under two labels.
+ */
+export const DEFAULT_FOLDER = 'Subscriptions';
+
 export interface Feed {
   id: string;
   title: string;
