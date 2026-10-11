@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Runtime state: holds the app PIN and live session tokens. Never commit it.
+data/store.json

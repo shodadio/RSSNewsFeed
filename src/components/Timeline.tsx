@@ -3,22 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Search,
-  CheckCheck,
   ChevronLeft,
   Filter,
   CheckCircle2,
+  MailCheck,
   Sparkles,
   ArrowDown,
   RefreshCw
 } from 'lucide-react';
-import { Article, SmartFilter, Feed, AIBriefing } from '../types';
+import { Article, SmartFilter, Feed, AIBriefing, AIBriefingStory } from '../types';
 import { SwipeableArticleCard } from './SwipeableArticleCard';
 import { AIBriefCard } from './AIBriefCard';
-import { triggerHaptic } from '../utils/haptics';
-import { useLongPressReorder } from '../hooks/useLongPressReorder';
 
 interface TimelineProps {
   articles: Article[];
@@ -41,13 +39,13 @@ interface TimelineProps {
   isRefreshing?: boolean;
   isMobile: boolean;
   onUpdateArticle?: (updatedArticle: Article) => void;
-  onReorderArticles?: (newArticles: Article[]) => void;
   aiBriefing?: AIBriefing | null;
   isGeneratingBriefing?: boolean;
   isBriefingExpanded?: boolean;
   onGenerateBriefing?: () => void;
   onToggleBriefingCollapse?: () => void;
   onDismissBriefing?: () => void;
+  onSelectBriefingStory?: (story: AIBriefingStory) => void;
 }
 
 export const Timeline: React.FC<TimelineProps> = ({
@@ -71,23 +69,28 @@ export const Timeline: React.FC<TimelineProps> = ({
   isRefreshing = false,
   isMobile,
   onUpdateArticle,
-  onReorderArticles,
   aiBriefing = null,
   isGeneratingBriefing = false,
   isBriefingExpanded = true,
   onGenerateBriefing,
   onToggleBriefingCollapse,
-  onDismissBriefing
+  onDismissBriefing,
+  onSelectBriefingStory
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [onlyUnread, setOnlyUnread] = useState(false);
+
+  // Search is scoped to the current view. Carrying the query across a filter change
+  // made "no results" indistinguishable from an empty feed.
+  useEffect(() => {
+    setSearchQuery('');
+  }, [activeFilter.type, activeFilter.id]);
 
   // Pull-to-refresh state
   const [pullDistance, setPullDistance] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pullStartYRef = useRef(0);
-  const hasTriggeredHapticRef = useRef(false);
 
   const PULL_THRESHOLD = 64; // Distance in px to trigger refresh
   const MAX_PULL = 96;
@@ -96,7 +99,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     if (scrollContainerRef.current && scrollContainerRef.current.scrollTop <= 0) {
       pullStartYRef.current = e.touches[0].clientY;
       setIsPulling(true);
-      hasTriggeredHapticRef.current = false;
     } else {
       setIsPulling(false);
     }
@@ -116,12 +118,6 @@ export const Timeline: React.FC<TimelineProps> = ({
       const damped = Math.min(MAX_PULL, deltaY * 0.45);
       setPullDistance(damped);
 
-      if (damped >= PULL_THRESHOLD && !hasTriggeredHapticRef.current) {
-        hasTriggeredHapticRef.current = true;
-        triggerHaptic('medium');
-      } else if (damped < PULL_THRESHOLD && hasTriggeredHapticRef.current) {
-        hasTriggeredHapticRef.current = false;
-      }
     } else {
       if (pullDistance > 0) setPullDistance(0);
     }
@@ -132,7 +128,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     setIsPulling(false);
 
     if (pullDistance >= PULL_THRESHOLD && onRefreshAll && !isRefreshing) {
-      triggerHaptic('success');
       onRefreshAll();
     }
     setPullDistance(0);
@@ -150,21 +145,6 @@ export const Timeline: React.FC<TimelineProps> = ({
       a.feedTitle.toLowerCase().includes(q) ||
       (a.author && a.author.toLowerCase().includes(q))
     );
-  });
-
-  const {
-    registerItemRef,
-    handlePointerDown,
-    getItemStyle
-  } = useLongPressReorder({
-    items: filteredArticles,
-    onReorder: (newFiltered) => {
-      if (onReorderArticles) {
-        onReorderArticles(newFiltered);
-      }
-    },
-    containerRef: scrollContainerRef,
-    longPressDelay: 300
   });
 
   const formatRelativeTime = (dateStr: string) => {
@@ -187,28 +167,8 @@ export const Timeline: React.FC<TimelineProps> = ({
     }
   };
 
-  const touchStartXRef = useRef(0);
-  const touchStartYRef = useRef(0);
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (!isMobile) return;
-    touchStartXRef.current = e.touches[0].clientX;
-    touchStartYRef.current = e.touches[0].clientY;
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (!isMobile || !onBackToFeeds) return;
-    const deltaX = e.changedTouches[0].clientX - touchStartXRef.current;
-    const deltaY = e.changedTouches[0].clientY - touchStartYRef.current;
-    if (touchStartXRef.current < 80 && deltaX > 60 && Math.abs(deltaX) > Math.abs(deltaY) * 1.3) {
-      onBackToFeeds();
-    }
-  };
-
   return (
     <div
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
       className={`${
         isMobile ? 'w-full' : 'w-full md:w-80 lg:w-96'
       } bg-black flex flex-col h-full border-r border-white/[0.08] shrink-0 select-none relative overflow-hidden`}
@@ -237,7 +197,6 @@ export const Timeline: React.FC<TimelineProps> = ({
             {onGenerateBriefing && (
               <button
                 onClick={() => {
-                  triggerHaptic('medium');
                   onGenerateBriefing();
                 }}
                 disabled={isGeneratingBriefing}
@@ -254,25 +213,32 @@ export const Timeline: React.FC<TimelineProps> = ({
 
             <button
               onClick={() => setOnlyUnread(!onlyUnread)}
-              className={`p-2 rounded-xl text-xs transition flex items-center gap-1 ${
+              aria-pressed={onlyUnread}
+              aria-label="Show unread articles only"
+              className={`h-8 px-2.5 rounded-xl text-[11px] font-semibold transition flex items-center gap-1.5 ${
                 onlyUnread
-                  ? 'bg-[#0A84FF] text-white font-semibold'
+                  ? 'bg-[#0A84FF] text-white'
                   : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.08]'
               }`}
-              title={onlyUnread ? 'Showing unread only' : 'Showing all'}
+              title={onlyUnread ? 'Showing unread only' : 'Showing all articles'}
             >
-              <Filter className="w-4 h-4 stroke-[1.5]" />
+              {onlyUnread ? (
+                <CheckCircle2 className="w-3.5 h-3.5 stroke-[1.5]" />
+              ) : (
+                <Filter className="w-3.5 h-3.5 stroke-[1.5]" />
+              )}
+              <span className="hidden sm:inline">Unread</span>
             </button>
 
             <button
               onClick={() => {
-                triggerHaptic('medium');
                 onMarkAllAsRead();
               }}
               className="p-2 text-[#8E8E93] hover:text-white hover:bg-white/[0.08] rounded-xl transition"
-              title="Mark All as Read"
+              aria-label="Mark all as read"
+              title="Mark all as read"
             >
-              <CheckCheck className="w-4 h-4 text-emerald-400 stroke-[1.5]" />
+              <MailCheck className="w-4 h-4 stroke-[1.5]" />
             </button>
 
             {onRefreshAll && (
@@ -361,6 +327,7 @@ export const Timeline: React.FC<TimelineProps> = ({
               onGenerate={onGenerateBriefing}
               onToggleCollapse={onToggleBriefingCollapse ?? (() => {})}
               onDismiss={onDismissBriefing ?? (() => {})}
+              onSelectStory={onSelectBriefingStory}
               variant="timeline"
             />
           </div>
@@ -394,7 +361,6 @@ export const Timeline: React.FC<TimelineProps> = ({
               {activeFilter.type !== 'all' && onSelectFilter && (
                 <button
                   onClick={() => {
-                    triggerHaptic('light');
                     onSelectFilter({ type: 'all', title: 'All Articles' });
                   }}
                   className="px-3.5 py-2 min-h-[44px] bg-[#0A84FF] hover:bg-[#0A84FF]/90 active:bg-[#0A84FF]/80 text-white text-xs font-bold rounded-xl transition shadow-lg shadow-[#0A84FF]/20 active:scale-95 flex items-center justify-center"
@@ -406,7 +372,6 @@ export const Timeline: React.FC<TimelineProps> = ({
               {onRefreshAll && (
                 <button
                   onClick={() => {
-                    triggerHaptic('light');
                     onRefreshAll();
                   }}
                   disabled={isRefreshing}
@@ -419,7 +384,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             </div>
           </div>
         ) : (
-          filteredArticles.map((article, index) => {
+          filteredArticles.map((article) => {
             const isSelected = selectedArticleId === article.id;
             const isRead = readArticleIds.has(article.id);
             const isStarred = starredArticleIds.has(article.id);
@@ -444,9 +409,6 @@ export const Timeline: React.FC<TimelineProps> = ({
                 onUnarchive={onUnarchiveArticle}
                 onToggleRead={onToggleRead}
                 onUpdateArticle={onUpdateArticle}
-                onPointerDown={(e) => handlePointerDown(index, e)}
-                style={getItemStyle(index)}
-                refCallback={(el) => registerItemRef(index, el)}
               />
             );
           })

@@ -3,15 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Settings as SettingsIcon,
   X,
-  KeyRound,
   Trash2,
-  LogOut,
-  Shield,
-  Check,
   AlertCircle,
   FileText,
   Download,
@@ -19,30 +15,20 @@ import {
   CheckCircle2,
   Smartphone,
   Cloud,
-  Zap,
-  Volume2,
-  Lock,
-  Unlock,
-  Radio
+  Layers
 } from 'lucide-react';
-import { Feed } from '../types';
-import {
-  triggerHaptic,
-  getHapticsInfo,
-  setHapticsEnabled as setHapticsStorage,
-  isAudioTactileEnabled,
-  setAudioTactileEnabled,
-  HapticType
-} from '../utils/haptics';
+import { Feed, DEFAULT_FOLDER } from '../types';
 import { getStorageMode, setStorageMode, saveLocalFeeds } from '../utils/storage';
-import { getAuthHeaders } from '../utils/api';
+import { getJsonHeaders } from '../utils/api';
+import { ConfirmDialog } from './ConfirmDialog';
+import { FolderPicker } from './FolderPicker';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   feeds: Feed[];
   onDeleteFeed: (feedId: string) => void;
-  onLogout: () => void;
+  onUpdateFeed?: (feedId: string, updates: Partial<Feed>) => void;
   onImportComplete?: () => void;
 }
 
@@ -51,14 +37,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   feeds,
   onDeleteFeed,
-  onLogout,
+  onUpdateFeed,
   onImportComplete
 }) => {
-  const [currentPin, setCurrentPin] = useState('');
-  const [newPin, setNewPin] = useState('');
-  const [pinStatus, setPinStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [savingPin, setSavingPin] = useState(false);
-
   // OPML state inside Settings
   const [opmlText, setOpmlText] = useState('');
   const [importing, setImporting] = useState(false);
@@ -69,80 +50,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return getStorageMode();
   });
 
-  const [authRequired, setAuthRequired] = useState(true);
-  const [togglingAuth, setTogglingAuth] = useState(false);
+  const [confirmDeleteFeed, setConfirmDeleteFeed] = useState<Feed | null>(null);
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch('/api/auth/verify', { headers: getAuthHeaders() })
-      .then((r) => r.json())
-      .then((d) => {
-        if (typeof d.authRequired === 'boolean') {
-          setAuthRequired(d.authRequired);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const handleToggleAuthRequired = async () => {
-    setTogglingAuth(true);
-    triggerHaptic('medium');
-    const next = !authRequired;
-    try {
-      const res = await fetch('/api/auth/toggle-required', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ authRequired: next })
-      });
-      if (res.ok) {
-        setAuthRequired(next);
-        triggerHaptic('success');
-      } else {
-        triggerHaptic('error');
-      }
-    } catch {
-      triggerHaptic('error');
-    } finally {
-      setTogglingAuth(false);
-    }
-  };
-
-  const hapticsInfo = getHapticsInfo();
+  const folderNames = useMemo(
+    () => Array.from(new Set(feeds.map((f) => f.folder || DEFAULT_FOLDER))),
+    [feeds]
+  );
 
   const handleStorageModeChange = (mode: 'iphone' | 'icloud') => {
-    triggerHaptic();
     setStorageModeState(mode);
     setStorageMode(mode);
     saveLocalFeeds(feeds);
   };
 
   if (!isOpen) return null;
-
-  const handleChangePin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingPin(true);
-    setPinStatus(null);
-
-    try {
-      const res = await fetch('/api/auth/change-pin', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ currentPin, newPin })
-      });
-      const data = await res.json();
-
-      if (res.ok && data.success) {
-        setPinStatus({ type: 'success', text: 'Passcode changed successfully!' });
-        setCurrentPin('');
-        setNewPin('');
-      } else {
-        setPinStatus({ type: 'error', text: data.message || 'Failed to update passcode.' });
-      }
-    } catch {
-      setPinStatus({ type: 'error', text: 'Network error updating PIN.' });
-    } finally {
-      setSavingPin(false);
-    }
-  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -168,7 +90,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     try {
       const res = await fetch('/api/opml/import', {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: getJsonHeaders(),
         body: JSON.stringify({ opmlContent: opmlText })
       });
       const data = await res.json();
@@ -205,32 +127,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         <h3 className="text-lg font-bold text-white mb-1 flex items-center gap-2">
           <SettingsIcon className="w-5 h-5 text-amber-400" />
-          Settings & Account
+          Settings
         </h3>
-        <p className="text-xs text-slate-400 mb-6">Personal configuration and security controls.</p>
-
-        {/* Account Info */}
-        <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-              <Shield className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-white">Owner Account</div>
-              <div className="text-xs text-slate-400 font-mono">rol.asthana@purvasa.uk</div>
-            </div>
-          </div>
-          <button
-            onClick={() => {
-              onLogout();
-              onClose();
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-medium transition"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            Lock App
-          </button>
-        </div>
+        <p className="text-xs text-slate-400 mb-6">Personal configuration.</p>
 
         {/* PWA Data Persistence (iPhone / iCloud) */}
         <div className="border-t border-slate-800 pt-5 mb-6">
@@ -280,95 +179,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <span>Local persistence active: Your feeds, starred articles, and reading history are saved directly on your device and will never reset on server restarts.</span>
           </div>
         </div>
-        {/* Passcode Protection Toggle */}
-        <div className="border-t border-slate-800 pt-5 mb-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {authRequired ? (
-                <Lock className="w-4 h-4 text-amber-400" />
-              ) : (
-                <Unlock className="w-4 h-4 text-slate-500" />
-              )}
-              <div>
-                <h4 className="text-xs font-semibold text-slate-200">Require Passcode Lock</h4>
-                <p className="text-[11px] text-slate-400">
-                  {authRequired
-                    ? 'Protected with 4-digit PIN (default 1984)'
-                    : 'Unlocked for instant access without entering passcode'}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              disabled={togglingAuth}
-              onClick={handleToggleAuthRequired}
-              className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-200 ease-in-out cursor-pointer ${
-                authRequired ? 'bg-amber-500' : 'bg-slate-800'
-              }`}
-            >
-              <div
-                className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200 ease-in-out ${
-                  authRequired ? 'translate-x-5' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
-        </div>
-
-        {/* Change PIN Section */}
-        <div className="border-t border-slate-800 pt-5 mb-6">
-          <h4 className="text-xs font-semibold text-slate-200 mb-3 flex items-center gap-1.5">
-            <KeyRound className="w-4 h-4 text-amber-400" /> Change Personal Passcode
-          </h4>
-          <form onSubmit={handleChangePin} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[11px] text-slate-400 block mb-1">Current PIN</label>
-                <input
-                  type="password"
-                  required
-                  value={currentPin}
-                  onChange={(e) => setCurrentPin(e.target.value)}
-                  placeholder="e.g. 1984"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] text-slate-400 block mb-1">New PIN (4+ digits)</label>
-                <input
-                  type="password"
-                  required
-                  value={newPin}
-                  onChange={(e) => setNewPin(e.target.value)}
-                  placeholder="New passcode"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
-                />
-              </div>
-            </div>
-
-            {pinStatus && (
-              <div
-                className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
-                  pinStatus.type === 'success'
-                    ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
-                    : 'bg-rose-500/10 text-rose-300 border border-rose-500/20'
-                }`}
-              >
-                {pinStatus.type === 'success' ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-                <span>{pinStatus.text}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={savingPin || !currentPin || !newPin}
-              className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 disabled:opacity-40 transition"
-            >
-              Update Passcode
-            </button>
-          </form>
-        </div>
-
         {/* OPML Subscriptions Import & Export Section */}
         <div className="border-t border-slate-800 pt-5 mb-6">
           <h4 className="text-xs font-semibold text-slate-200 mb-2 flex items-center gap-1.5">
@@ -440,24 +250,63 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {feeds.map((feed) => (
               <div
                 key={feed.id}
-                className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-850 text-xs"
+                className="rounded-xl bg-slate-950 border border-slate-850 text-xs overflow-hidden"
               >
-                <div className="truncate pr-2">
-                  <div className="font-medium text-slate-200 truncate">{feed.title}</div>
-                  <div className="text-[10px] text-slate-500 truncate">{feed.url}</div>
+                <div className="flex items-center justify-between p-2.5">
+                  <div className="truncate pr-2">
+                    <div className="font-medium text-slate-200 truncate">{feed.title}</div>
+                    <div className="text-[10px] text-slate-500 truncate">{feed.url}</div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {onUpdateFeed && (
+                      <button
+                        onClick={() => setEditingFolderId(editingFolderId === feed.id ? null : feed.id)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[10px] text-amber-300 transition max-w-[140px]"
+                        title="Move to folder"
+                      >
+                        <Layers className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{feed.folder || DEFAULT_FOLDER}</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setConfirmDeleteFeed(feed)}
+                      className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition shrink-0"
+                      title="Unsubscribe"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => onDeleteFeed(feed.id)}
-                  className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition shrink-0"
-                  title="Unsubscribe"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {editingFolderId === feed.id && onUpdateFeed && (
+                  <div className="px-2.5 pb-2.5 border-t border-slate-800/70">
+                    <FolderPicker
+                      folders={folderNames}
+                      current={feed.folder || DEFAULT_FOLDER}
+                      onSelect={(folder) => {
+                        onUpdateFeed(feed.id, { folder });
+                        setEditingFolderId(null);
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmDeleteFeed !== null}
+        title="Unsubscribe from feed?"
+        message={`This removes "${confirmDeleteFeed?.title ?? ''}" and its articles from your library. You can add it again later.`}
+        confirmLabel="Unsubscribe"
+        destructive
+        onCancel={() => setConfirmDeleteFeed(null)}
+        onConfirm={() => {
+          if (confirmDeleteFeed) onDeleteFeed(confirmDeleteFeed.id);
+          setConfirmDeleteFeed(null);
+        }}
+      />
     </div>
   );
 };

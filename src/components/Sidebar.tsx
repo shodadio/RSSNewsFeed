@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Calendar,
@@ -22,14 +22,15 @@ import {
   Layers,
   BookOpen,
   Tag,
-  Trash2
+  Trash2,
+  MoreHorizontal
 } from 'lucide-react';
-import { Feed, SmartFilter, AIBriefing } from '../types';
+import { Feed, SmartFilter, AIBriefing, AIBriefingStory, DEFAULT_FOLDER } from '../types';
 import { PWAInstallGuide } from './PWAInstallGuide';
 import { AIBriefCard } from './AIBriefCard';
-import { triggerHaptic } from '../utils/haptics';
 import { formatTag, isMetaTag } from '../utils/tagUtils';
-import { useLongPressReorder } from '../hooks/useLongPressReorder';
+import { ConfirmDialog } from './ConfirmDialog';
+import { FolderPicker } from './FolderPicker';
 
 interface SidebarProps {
   feeds: Feed[];
@@ -41,109 +42,64 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onOpenReader?: () => void;
   onDeleteFeed?: (feedId: string) => void;
-  onReorderFeeds?: (newFeeds: Feed[]) => void;
+  onUpdateFeed?: (feedId: string, updates: Partial<Feed>) => void;
+  onRenameFolder?: (oldName: string, newName: string) => void;
   unreadCountByFeed: Record<string, number>;
   totalUnreadCount: number;
   todayCount: number;
   starredCount: number;
   archivedCount: number;
   isMobile?: boolean;
+  /** ISO timestamp of the last completed refresh, for the honest header status. */
+  lastUpdated?: string | null;
   aiBriefing?: AIBriefing | null;
   isGeneratingBriefing?: boolean;
   isBriefingExpanded?: boolean;
   onGenerateBriefing?: () => void;
   onToggleBriefingCollapse?: () => void;
   onDismissBriefing?: () => void;
+  onSelectBriefingStory?: (story: AIBriefingStory) => void;
 }
 
-interface FolderFeedsReorderListProps {
-  folderName: string;
+interface FolderFeedsListProps {
   folderFeeds: Feed[];
-  allFeeds: Feed[];
-  onReorderFeeds?: (newFeeds: Feed[]) => void;
   activeFilter: SmartFilter;
   unreadCountByFeed: Record<string, number>;
   onSelectFilter: (filter: SmartFilter) => void;
-  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   isFeedActive: (feedId: string) => boolean;
   onOpenFeedMenu: (feed: Feed) => void;
 }
 
-const FolderFeedsReorderList: React.FC<FolderFeedsReorderListProps> = ({
-  folderName,
+const FolderFeedsList: React.FC<FolderFeedsListProps> = ({
   folderFeeds,
-  allFeeds,
-  onReorderFeeds,
   activeFilter,
   unreadCountByFeed,
   onSelectFilter,
-  scrollContainerRef,
   isFeedActive,
   onOpenFeedMenu
 }) => {
-  const {
-    isDragging,
-    draggedIndex,
-    overIndex,
-    registerItemRef,
-    handlePointerDown,
-    handlePointerMove,
-    handlePointerUp,
-    getItemStyle
-  } = useLongPressReorder({
-    items: folderFeeds,
-    onReorder: (newFolderFeeds) => {
-      if (onReorderFeeds) {
-        const newAll = [...allFeeds];
-        let idx = 0;
-        for (let i = 0; i < newAll.length; i++) {
-          if ((newAll[i].folder || 'Feeds') === folderName) {
-            newAll[i] = newFolderFeeds[idx++];
-          }
-        }
-        onReorderFeeds(newAll);
-      }
-    },
-    containerRef: scrollContainerRef,
-    longPressDelay: 300,
-    autoScrollThreshold: 70
-  });
-
   return (
     <div className="bg-black/20 divide-y divide-white/[0.04] relative">
-      {folderFeeds.map((feed, index) => {
+      {folderFeeds.map((feed) => {
         const active = isFeedActive(feed.id);
         const count = unreadCountByFeed[feed.id] || 0;
-        const isThisOver = isDragging && overIndex === index && draggedIndex !== index;
 
         return (
           <div
             key={feed.id}
-            ref={(el) => registerItemRef(index, el)}
-            style={getItemStyle(index)}
-            onPointerDown={(e) => handlePointerDown(index, e)}
-            onTouchStart={(e) => handlePointerDown(index, e)}
-            onTouchMove={handlePointerMove}
-            onTouchEnd={handlePointerUp}
-            className="relative"
+            className={`relative flex items-center min-h-[44px] transition ${
+              active ? 'bg-[#0A84FF]' : 'hover:bg-white/[0.04]'
+            }`}
           >
-            {isThisOver && (
-              <div className="h-0.5 bg-[#0A84FF] shadow-[0_0_8px_#0A84FF] mx-4 rounded-full animate-pulse z-40 relative" />
-            )}
             <button
               onClick={() => {
-                if (!isDragging) {
-                  triggerHaptic('selection');
-                  onSelectFilter({ type: 'feed', id: feed.id, title: feed.title });
-                }
+                onSelectFilter({ type: 'feed', id: feed.id, title: feed.title });
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 onOpenFeedMenu(feed);
               }}
-              className={`w-full flex items-center justify-between pl-9 pr-3.5 min-h-[44px] transition text-left select-none ${
-                active ? 'bg-[#0A84FF] text-white font-semibold' : 'text-slate-200 hover:bg-white/[0.04]'
-              }`}
+              className="flex-1 min-w-0 flex items-center justify-between pl-9 pr-1 min-h-[44px] transition text-left select-none"
             >
               <div className="flex items-center gap-2.5 truncate pr-2">
                 {feed.favicon ? (
@@ -158,12 +114,34 @@ const FolderFeedsReorderList: React.FC<FolderFeedsReorderListProps> = ({
                 ) : (
                   <span className="w-1.5 h-1.5 rounded-full bg-[#8E8E93] shrink-0" />
                 )}
-                <span className="truncate">{feed.title}</span>
+                <span className={`truncate ${active ? 'text-white font-semibold' : 'text-slate-200'}`}>
+                  {feed.title}
+                </span>
               </div>
 
               <span className={`text-xs font-normal shrink-0 ${active ? 'text-white/80' : 'text-[#8E8E93]'}`}>
                 {count > 0 ? count : ''}
               </span>
+            </button>
+
+            {/* Visible affordance for the feed action sheet. It used to be reachable
+                only through a 450 ms long-press or right-click, neither of which iOS
+                fires — so Unsubscribe and Move to Folder were desktop-only secrets. */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenFeedMenu(feed);
+              }}
+              aria-label={`Options for ${feed.title}`}
+              aria-haspopup="dialog"
+              className={`shrink-0 p-2 mr-2 rounded-lg transition ${
+                active
+                  ? 'text-white/90 hover:bg-white/15'
+                  : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.08]'
+              }`}
+            >
+              <MoreHorizontal className="w-4 h-4 stroke-[1.5]" />
             </button>
           </div>
         );
@@ -182,38 +160,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSettings,
   onOpenReader,
   onDeleteFeed,
-  onReorderFeeds,
+  onUpdateFeed,
+  onRenameFolder,
   unreadCountByFeed,
   totalUnreadCount,
   todayCount,
   starredCount,
   archivedCount = 0,
   isMobile = false,
+  lastUpdated = null,
   aiBriefing = null,
   isGeneratingBriefing = false,
   isBriefingExpanded = true,
   onGenerateBriefing,
   onToggleBriefingCollapse,
-  onDismissBriefing
+  onDismissBriefing,
+  onSelectBriefingStory
 }) => {
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [feedActionTarget, setFeedActionTarget] = useState<Feed | null>(null);
-  const feedLongPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const [confirmDeleteFeed, setConfirmDeleteFeed] = useState<Feed | null>(null);
+  const [showMovePicker, setShowMovePicker] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const startFeedLongPress = (feed: Feed) => {
-    feedLongPressTimer.current = setTimeout(() => {
-      triggerHaptic('heavy');
-      setFeedActionTarget(feed);
-    }, 450);
-  };
+  // Live relative timestamp for the header. "Updated Just Now" was hard-coded and
+  // therefore lied as soon as the app had been open for a while.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, []);
 
-  const cancelFeedLongPress = () => {
-    if (feedLongPressTimer.current) {
-      clearTimeout(feedLongPressTimer.current);
-      feedLongPressTimer.current = null;
-    }
-  };
+  const updatedLabel = useMemo(() => {
+    if (!lastUpdated) return 'Not updated yet';
+    const ms = now - new Date(lastUpdated).getTime();
+    if (!Number.isFinite(ms)) return 'Not updated yet';
+    const min = Math.floor(ms / 60000);
+    if (min < 1) return 'Updated just now';
+    if (min < 60) return `Updated ${min}m ago`;
+    const hrs = Math.floor(min / 60);
+    if (hrs < 24) return `Updated ${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `Updated ${days}d ago`;
+  }, [lastUpdated, now]);
 
   const toggleFolder = (folderName: string) => {
     setCollapsedFolders((prev) => ({
@@ -222,10 +211,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }));
   };
 
+  const folderNames = useMemo(
+    () => Array.from(new Set(feeds.map((f) => f.folder || DEFAULT_FOLDER))),
+    [feeds]
+  );
+
+  // Folder rename sheet. Folders have no record of their own -- they are derived
+  // from the feeds filed under them -- so renaming is a re-file of the group.
+  const [folderActionTarget, setFolderActionTarget] = useState<string | null>(null);
+  const [showRenameInput, setShowRenameInput] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+
+  const renameTarget = renameValue.trim();
+  const renameWillMerge =
+    !!renameTarget && renameTarget !== folderActionTarget && folderNames.includes(renameTarget);
+
+  const submitFolderRename = () => {
+    if (!folderActionTarget || !renameTarget || renameTarget === folderActionTarget) return;
+    onRenameFolder?.(folderActionTarget, renameTarget);
+    setFolderActionTarget(null);
+    setShowRenameInput(false);
+  };
+
   // Group feeds by folder
   const groupedFeeds: Record<string, Feed[]> = {};
   feeds.forEach((feed) => {
-    const folder = feed.folder || 'Feeds';
+    const folder = feed.folder || DEFAULT_FOLDER;
     if (!groupedFeeds[folder]) groupedFeeds[folder] = [];
     groupedFeeds[folder].push(feed);
   });
@@ -273,13 +284,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-white tracking-tight">Feeds</h1>
-            <p className="text-xs text-[#8E8E93] mt-0.5">Updated Just Now</p>
+            <p className="text-xs text-[#8E8E93] mt-0.5">{updatedLabel}</p>
           </div>
           <div className="flex items-center gap-2">
             <PWAInstallGuide />
             <button
               onClick={() => {
-                triggerHaptic('medium');
                 onRefreshAll();
               }}
               disabled={isRefreshing}
@@ -305,6 +315,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onGenerate={onGenerateBriefing}
             onToggleCollapse={onToggleBriefingCollapse ?? (() => {})}
             onDismiss={onDismissBriefing ?? (() => {})}
+            onSelectStory={onSelectBriefingStory}
             variant="sidebar"
           />
         )}
@@ -318,7 +329,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Today */}
             <button
               onClick={() => {
-                triggerHaptic('selection');
                 onSelectFilter({ type: 'today', title: 'Today' });
               }}
               className={`w-full flex items-center justify-between px-3.5 min-h-[44px] transition text-left ${
@@ -337,7 +347,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* All Unread */}
             <button
               onClick={() => {
-                triggerHaptic('selection');
                 onSelectFilter({ type: 'unread', title: 'All Unread' });
               }}
               className={`w-full flex items-center justify-between px-3.5 min-h-[44px] transition text-left ${
@@ -356,7 +365,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Starred */}
             <button
               onClick={() => {
-                triggerHaptic('selection');
                 onSelectFilter({ type: 'starred', title: 'Starred' });
               }}
               className={`w-full flex items-center justify-between px-3.5 min-h-[44px] transition text-left ${
@@ -375,7 +383,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Archive */}
             <button
               onClick={() => {
-                triggerHaptic('selection');
                 onSelectFilter({ type: 'archive', title: 'Archive' });
               }}
               className={`w-full flex items-center justify-between px-3.5 min-h-[44px] transition text-left ${
@@ -397,6 +404,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="bg-[#1C1C1E] rounded-2xl border border-white/[0.08] overflow-hidden shadow-sm">
           <div className="px-3.5 pt-3 pb-1.5 flex items-center justify-between text-[13px] font-bold text-[#8E8E93] uppercase tracking-wider">
             <span>Subscriptions</span>
+            <button
+              type="button"
+              onClick={onOpenAddFeed}
+              aria-label="Add a feed"
+              title="Add a feed"
+              className="p-1 -mr-1 rounded-lg text-[#0A84FF] hover:text-white hover:bg-white/[0.08] transition"
+            >
+              <Plus className="w-4 h-4 stroke-[2]" />
+            </button>
           </div>
           <div className="divide-y divide-white/[0.06]">
             {Object.entries(groupedFeeds).map(([folderName, folderFeeds]) => {
@@ -405,41 +421,78 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 (sum, f) => sum + (unreadCountByFeed[f.id] || 0),
                 0
               );
+              const folderActive = isFolderActive(folderName);
 
               return (
                 <div key={folderName} className="flex flex-col">
                   {/* Folder Header Row */}
-                  <div className="w-full flex items-center justify-between px-3.5 min-h-[44px] text-slate-100 hover:bg-white/[0.04] transition">
+                  <div
+                    className={`w-full flex items-center min-h-[44px] transition ${
+                      folderActive ? 'bg-[#0A84FF] text-white' : 'text-slate-100 hover:bg-white/[0.04]'
+                    }`}
+                  >
                     <button
+                      type="button"
                       onClick={() => toggleFolder(folderName)}
-                      className="flex items-center gap-3 truncate flex-1 text-left"
+                      aria-expanded={!isCollapsed}
+                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${folderName}`}
+                      className={`pl-3 pr-1.5 min-h-[44px] flex items-center shrink-0 transition ${
+                        folderActive ? 'text-white/90 hover:text-white' : 'text-[#8E8E93] hover:text-white'
+                      }`}
                     >
                       {isCollapsed ? (
-                        <ChevronRight className="w-4 h-4 text-[#8E8E93] stroke-[1.5] shrink-0" />
+                        <ChevronRight className="w-4 h-4 stroke-[1.5]" />
                       ) : (
-                        <ChevronDown className="w-4 h-4 text-[#8E8E93] stroke-[1.5] shrink-0" />
+                        <ChevronDown className="w-4 h-4 stroke-[1.5]" />
                       )}
-                      <FolderOpen className="w-4 h-4 text-[#0A84FF] stroke-[1.5] shrink-0" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSelectFilter({ type: 'folder', id: folderName, title: folderName })}
+                      className="flex items-center gap-2.5 truncate flex-1 min-h-[44px] pr-2 text-left"
+                    >
+                      <FolderOpen className={`w-4 h-4 stroke-[1.5] shrink-0 ${folderActive ? 'text-white' : 'text-[#0A84FF]'}`} />
                       <span className="font-semibold truncate">{folderName}</span>
                     </button>
-                    <span className="text-xs text-[#8E8E93] font-normal pl-2">
+                    <span className={`text-xs font-normal pl-1 shrink-0 ${folderActive ? 'text-white/80' : 'text-[#8E8E93]'}`}>
                       {folderUnread > 0 ? folderUnread : ''}
                     </span>
+                    {/* Renaming a folder used to mean opening every feed inside it.
+                        Same visible affordance as a feed row, so it works on iOS. */}
+                    {onRenameFolder && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenameValue(folderName);
+                          setShowRenameInput(false);
+                          setFolderActionTarget(folderName);
+                        }}
+                        aria-label={`Options for folder ${folderName}`}
+                        aria-haspopup="dialog"
+                        className={`shrink-0 p-2 mr-2 rounded-lg transition ${
+                          folderActive
+                            ? 'text-white/90 hover:bg-white/15'
+                            : 'text-[#8E8E93] hover:text-white hover:bg-white/[0.08]'
+                        }`}
+                      >
+                        <MoreHorizontal className="w-4 h-4 stroke-[1.5]" />
+                      </button>
+                    )}
                   </div>
 
-                  {/* Folder Feeds List with Drag & Drop Reordering */}
+                  {/* Folder Feeds List */}
                   {!isCollapsed && (
-                    <FolderFeedsReorderList
-                      folderName={folderName}
+                    <FolderFeedsList
                       folderFeeds={folderFeeds}
-                      allFeeds={feeds}
-                      onReorderFeeds={onReorderFeeds}
                       activeFilter={activeFilter}
                       unreadCountByFeed={unreadCountByFeed}
                       onSelectFilter={onSelectFilter}
-                      scrollContainerRef={scrollContainerRef}
                       isFeedActive={isFeedActive}
-                      onOpenFeedMenu={setFeedActionTarget}
+                      onOpenFeedMenu={(feed) => {
+                        setShowMovePicker(false);
+                        setFeedActionTarget(feed);
+                      }}
                     />
                   )}
                 </div>
@@ -469,7 +522,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     key={tag}
                     onClick={() => {
-                      triggerHaptic('selection');
                       onSelectFilter({ type: 'tag', id: tag, title: tag });
                     }}
                     className={`px-3 py-1 rounded-md text-xs transition flex items-center gap-1.5 ${
@@ -506,7 +558,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           onClick={() => {
-            triggerHaptic('medium');
             onOpenAddFeed();
           }}
           className="w-12 h-12 rounded-full bg-[#0A84FF] text-white flex items-center justify-center shadow-2xl active:scale-95 transition"
@@ -539,10 +590,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <div className="space-y-1 text-xs font-medium">
+              {onUpdateFeed && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowMovePicker((v) => !v)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/[0.06] text-slate-200 transition"
+                  >
+                    <div className="p-1.5 rounded-lg bg-[#0A84FF]/20 text-[#0A84FF]">
+                      <FolderOpen className="w-4 h-4" />
+                    </div>
+                    <div className="text-left">
+                      <div className="font-semibold">Move to Folder</div>
+                      <div className="text-[10px] text-[#8E8E93]">
+                        Currently: {feedActionTarget.folder || DEFAULT_FOLDER}
+                      </div>
+                    </div>
+                  </button>
+                  {showMovePicker && (
+                    <div className="px-3 pb-1">
+                      <FolderPicker
+                        folders={folderNames}
+                        current={feedActionTarget.folder || DEFAULT_FOLDER}
+                        onSelect={(folder) => {
+                          onUpdateFeed(feedActionTarget.id, { folder });
+                          setShowMovePicker(false);
+                          setFeedActionTarget(null);
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => {
-                  if (onDeleteFeed) onDeleteFeed(feedActionTarget.id);
+                  setConfirmDeleteFeed(feedActionTarget);
                   setFeedActionTarget(null);
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-rose-500/10 text-rose-400 hover:text-rose-300 transition"
@@ -568,6 +651,109 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>,
         document.body
       )}
+
+      {/* Folder options sheet (rename). Portaled so it sits above the sidebar. */}
+      {folderActionTarget && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-150"
+          onClick={() => setFolderActionTarget(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-[#1C1C1E] border border-white/10 p-4 shadow-2xl text-slate-100 space-y-3 animate-in slide-in-from-bottom-5 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-3 pt-2 pb-1 border-b border-white/[0.08]">
+              <span className="text-[10px] text-[#8E8E93] font-semibold uppercase tracking-wider block mb-1">
+                Folder Options
+              </span>
+              <h4 className="text-sm font-bold text-white truncate">{folderActionTarget}</h4>
+              <p className="text-[11px] text-[#8E8E93] mt-0.5">
+                {(groupedFeeds[folderActionTarget] || []).length}{' '}
+                {(groupedFeeds[folderActionTarget] || []).length === 1
+                  ? 'subscription'
+                  : 'subscriptions'}
+              </p>
+            </div>
+
+            <div className="space-y-1 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setShowRenameInput((v) => !v)}
+                aria-expanded={showRenameInput}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/[0.06] text-slate-200 transition"
+              >
+                <div className="p-1.5 rounded-lg bg-[#0A84FF]/20 text-[#0A84FF]">
+                  <FolderOpen className="w-4 h-4" />
+                </div>
+                <div className="text-left">
+                  <div className="font-semibold">Rename Folder</div>
+                  <div className="text-[10px] text-[#8E8E93]">
+                    Currently: {folderActionTarget}
+                  </div>
+                </div>
+              </button>
+
+              {showRenameInput && onRenameFolder && (
+                <div className="px-3 pb-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          submitFolderRename();
+                        }
+                      }}
+                      aria-label="New folder name"
+                      placeholder="Folder name"
+                      className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px] text-white placeholder-slate-500 focus:outline-none focus:border-[#0A84FF] transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={submitFolderRename}
+                      disabled={!renameTarget || renameTarget === folderActionTarget}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-[#0A84FF] hover:opacity-90 text-white disabled:opacity-40 transition shrink-0"
+                    >
+                      Rename
+                    </button>
+                  </div>
+                  {renameWillMerge && (
+                    <p className="text-[10px] text-amber-400/90">
+                      &#8220;{renameTarget}&#8221; already exists &mdash; the two folders will merge.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setFolderActionTarget(null)}
+              className="w-full py-2.5 rounded-2xl bg-white/[0.08] hover:bg-white/[0.12] text-slate-200 font-semibold text-xs transition"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Feed unsubscribe confirmation */}
+      <ConfirmDialog
+        isOpen={confirmDeleteFeed !== null}
+        title="Unsubscribe from feed?"
+        message={`This removes "${confirmDeleteFeed?.title ?? ''}" and its articles from your library. You can add it again later.`}
+        confirmLabel="Unsubscribe"
+        destructive
+        onCancel={() => setConfirmDeleteFeed(null)}
+        onConfirm={() => {
+          if (confirmDeleteFeed && onDeleteFeed) onDeleteFeed(confirmDeleteFeed.id);
+          setConfirmDeleteFeed(null);
+        }}
+      />
     </aside>
   );
 };

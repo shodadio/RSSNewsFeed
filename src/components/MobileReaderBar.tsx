@@ -12,7 +12,6 @@ import {
   Sliders,
   Share2
 } from 'lucide-react';
-import { triggerHaptic } from '../utils/haptics';
 
 interface MobileReaderBarProps {
   hasPrevArticle: boolean;
@@ -47,7 +46,6 @@ export const MobileReaderBar: React.FC<MobileReaderBarProps> = ({
         {/* Previous Article Button */}
         <button
           onClick={() => {
-            triggerHaptic('light');
             onPrevArticle();
           }}
           disabled={!hasPrevArticle}
@@ -65,10 +63,10 @@ export const MobileReaderBar: React.FC<MobileReaderBarProps> = ({
         {/* Favorite / Star Button */}
         <button
           onClick={() => {
-            triggerHaptic(isStarred ? 'light' : 'success');
             onToggleStar();
           }}
           className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl transition active:scale-95 active:bg-slate-800/80"
+          aria-pressed={isStarred}
           aria-label={isStarred ? 'Unstar article' : 'Star article'}
           title={isStarred ? 'Starred' : 'Star article'}
         >
@@ -82,10 +80,10 @@ export const MobileReaderBar: React.FC<MobileReaderBarProps> = ({
         {/* Read / Unread Toggle Button */}
         <button
           onClick={() => {
-            triggerHaptic('selection');
             onToggleRead();
           }}
           className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl transition active:scale-95 active:bg-slate-800/80"
+          aria-pressed={isRead}
           aria-label={isRead ? 'Mark as unread' : 'Mark as read'}
           title={isRead ? 'Read' : 'Unread'}
         >
@@ -99,7 +97,6 @@ export const MobileReaderBar: React.FC<MobileReaderBarProps> = ({
         {/* Share Button */}
         <button
           onClick={() => {
-            triggerHaptic('light');
             onShare();
           }}
           className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-slate-300 active:text-white active:bg-slate-800/80 active:scale-95 transition"
@@ -112,7 +109,6 @@ export const MobileReaderBar: React.FC<MobileReaderBarProps> = ({
         {/* Next Article Button */}
         <button
           onClick={() => {
-            triggerHaptic('light');
             onNextArticle();
           }}
           disabled={!hasNextArticle}

@@ -17,7 +17,6 @@ import {
   Pencil
 } from 'lucide-react';
 import { Article } from '../types';
-import { triggerHaptic } from '../utils/haptics';
 import { formatTag, isMetaTag } from '../utils/tagUtils';
 
 interface SwipeableArticleCardProps {
@@ -35,9 +34,6 @@ interface SwipeableArticleCardProps {
   onUnarchive?: (articleId: string) => void;
   onToggleRead: (articleId: string) => void;
   onUpdateArticle?: (updatedArticle: Article) => void;
-  onPointerDown?: (e: React.PointerEvent | React.TouchEvent) => void;
-  style?: React.CSSProperties;
-  refCallback?: (node: HTMLElement | null) => void;
 }
 
 const ACTION_TRAY_WIDTH = 225; // 75px per action button * 3
@@ -57,10 +53,7 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
   onArchive,
   onUnarchive,
   onToggleRead,
-  onUpdateArticle,
-  onPointerDown,
-  style,
-  refCallback
+  onUpdateArticle
 }) => {
   const [offsetX, setOffsetX] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -104,7 +97,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
 
     longPressTimerRef.current = setTimeout(() => {
       if (!hasMovedRef.current) {
-        triggerHaptic('heavy');
         setShowLongPressSheet(true);
         isDraggingRef.current = false;
       }
@@ -151,7 +143,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
     isDraggingRef.current = false;
 
     if (offsetX < -ACTION_TRAY_WIDTH - 20) {
-      triggerHaptic('error');
       setOffsetX(0);
       setIsOpen(false);
       onDelete(article.id);
@@ -159,7 +150,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
     }
 
     if (offsetX < -60) {
-      triggerHaptic('light');
       setOffsetX(-ACTION_TRAY_WIDTH);
       setIsOpen(true);
     } else {
@@ -171,22 +161,15 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
   const handleClickCard = () => {
     if (hasMovedRef.current) return;
     if (isOpen) {
-      triggerHaptic('light');
       setOffsetX(0);
       setIsOpen(false);
       return;
     }
-    triggerHaptic('selection');
     onSelect();
   };
 
   return (
-    <div
-      ref={refCallback}
-      onPointerDown={onPointerDown}
-      style={style}
-      className="relative overflow-hidden border-b border-white/[0.08] select-none bg-black"
-    >
+    <div className="relative overflow-hidden border-b border-white/[0.08] select-none bg-black">
       {/* Background Action Tray (iOS standard full-height action slots) */}
       <div
         className="absolute inset-y-0 right-0 w-[225px] flex items-stretch z-0 bg-black select-none pointer-events-auto"
@@ -338,13 +321,32 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
             <button
               type="button"
               onClick={(e) => onToggleStar(article.id, e)}
+              aria-pressed={isStarred}
+              aria-label={isStarred ? 'Remove from starred' : 'Add to starred'}
               className={`p-1 rounded transition ${
                 isStarred
                   ? 'text-[#0A84FF] hover:text-[#0A84FF]/80'
-                  : 'text-[#8E8E93] hover:text-white opacity-40 group-hover:opacity-100'
+                  : 'text-[#8E8E93] hover:text-white'
               }`}
             >
               <Star className={`w-3.5 h-3.5 stroke-[1.5] ${isStarred ? 'fill-[#0A84FF]' : ''}`} />
+            </button>
+
+            {/* Visible affordance for the long-press action sheet, which was otherwise
+                undiscoverable (and unreachable whenever a click was interpreted as a tap). */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowLongPressSheet(true);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              aria-label={`More actions for ${article.title}`}
+              aria-haspopup="dialog"
+              className="p-1 rounded text-[#8E8E93] hover:text-white hover:bg-white/[0.08] transition"
+            >
+              <MoreHorizontal className="w-3.5 h-3.5 stroke-[1.5]" />
             </button>
           </div>
 
@@ -384,7 +386,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   onDelete(article.id);
                 }}
@@ -402,7 +403,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   setIsEditing(true);
                 }}
@@ -420,7 +420,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   if (isArchived && onUnarchive) {
                     onUnarchive(article.id);
@@ -442,7 +441,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={(e) => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   onToggleStar(article.id, e);
                 }}
@@ -460,7 +458,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   setShowLongPressSheet(false);
                   onToggleRead(article.id);
                 }}
@@ -572,7 +569,6 @@ export const SwipeableArticleCard: React.FC<SwipeableArticleCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  triggerHaptic();
                   if (onUpdateArticle) {
                     onUpdateArticle({
                       ...article,

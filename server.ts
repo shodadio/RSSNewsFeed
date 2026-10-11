@@ -3,15 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Load secrets from a local .env file (gitignored). No-op if the file is absent,
+// so AI Studio / Cloud Run env injection still works unchanged.
+import 'dotenv/config';
+
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import dns from 'dns/promises';
-import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import Parser from 'rss-parser';
 import { GoogleGenAI, Type } from "@google/genai";
-import { suggestCategoriesAndTags } from './src/utils/categorySuggester.ts';
+import { suggestCategoriesAndTags, getCuratedFolder, CANONICAL_FOLDERS } from './src/utils/categorySuggester.ts';
 
 // Ensure HMR is disabled in AI Studio iframe environment to prevent WebSocket errors
 process.env.DISABLE_HMR = 'true';
@@ -75,12 +78,6 @@ if (!fs.existsSync(DATA_DIR)) {
 
 // Initial seed feeds
 const DEFAULT_STORE = {
-  auth: {
-    pin: '1984',
-    email: 'rol.asthana@purvasa.uk',
-    authRequired: true,
-    sessionTokens: [] as string[]
-  },
   feeds: [
     {
       id: 'feed-inessential',
@@ -263,92 +260,6 @@ async function safeFetch(url: string, init?: RequestInit, maxRedirects = 5): Pro
   throw new Error('Too many redirects while fetching URL');
 }
 
-// ======================== AUTHENTICATION & SECURITY ========================
-
-// Rate limiter for PIN attempts (Brute force defense)
-const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
-
-function isRateLimited(ip: string): boolean {
-  const record = loginAttempts.get(ip);
-  if (!record) return false;
-  if (Date.now() < record.lockedUntil) return true;
-  if (Date.now() >= record.lockedUntil && record.lockedUntil > 0) {
-    loginAttempts.delete(ip);
-    return false;
-  }
-  return false;
-}
-
-function recordFailedLogin(ip: string) {
-  const record = loginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
-  record.count += 1;
-  if (record.count >= 5) {
-    record.lockedUntil = Date.now() + 60000; // 60-second lockout
-  }
-  loginAttempts.set(ip, record);
-}
-
-function resetFailedLogin(ip: string) {
-  loginAttempts.delete(ip);
-}
-
-// Cryptographically secure active tokens
-const activeTokens = new Set<string>();
-
-function initTokensFromStore() {
-  const store = readStore();
-  if (Array.isArray(store.auth?.sessionTokens)) {
-    store.auth.sessionTokens.forEach((t: string) => activeTokens.add(t));
-  }
-}
-initTokensFromStore();
-
-function generateSessionToken(): string {
-  const token = crypto.randomBytes(32).toString('hex');
-  activeTokens.add(token);
-  const store = readStore();
-  if (!Array.isArray(store.auth.sessionTokens)) {
-    store.auth.sessionTokens = [];
-  }
-  store.auth.sessionTokens.push(token);
-  if (store.auth.sessionTokens.length > 25) {
-    store.auth.sessionTokens = store.auth.sessionTokens.slice(-25);
-  }
-  writeStore(store);
-  return token;
-}
-
-function isValidToken(token: string | undefined): boolean {
-  if (!token) return false;
-  if (activeTokens.has(token)) return true;
-  const store = readStore();
-  if (Array.isArray(store.auth?.sessionTokens) && store.auth.sessionTokens.includes(token)) {
-    activeTokens.add(token);
-    return true;
-  }
-  return false;
-}
-
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const store = readStore();
-  if (store.auth?.authRequired === false) {
-    return next();
-  }
-
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ')
-    ? authHeader.slice(7).trim()
-    : (req.headers['x-session-token'] as string);
-
-  if (!isValidToken(token)) {
-    return res.status(401).json({
-      success: false,
-      error: 'Unauthorized: Valid session passcode token is required.'
-    });
-  }
-  next();
-}
-
 // ======================== API ROUTES ========================
 
 // Health check
@@ -356,108 +267,75 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', name: 'RSSNewsFeeds-Web', time: new Date().toISOString() });
 });
 
-// Authentication verify
-app.post('/api/auth/login', (req: Request, res: Response) => {
-  const { pin } = req.body;
-  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || req.ip || 'unknown';
+// Passcode verification (compatibility shim).
+// The passcode gate is gone: this is a single-user reader and the PIN was only a
+// local convenience. This endpoint is kept so an already-installed copy of the app
+// (a cached service-worker bundle that still calls /api/auth/verify on startup)
+// unlocks itself normally instead of getting stuck on a login screen.
+app.get('/api/auth/verify', (_req: Request, res: Response) => {
+  res.json({ valid: true, authRequired: false });
+});
 
-  if (isRateLimited(clientIp)) {
-    return res.status(429).json({
-      success: false,
-      message: 'Too many failed passcode attempts. Please wait 60 seconds before trying again.'
-    });
+// ======================== AUTHOR FEED CATEGORIES ========================
+// rss-parser surfaces per-item <category> elements and iTunes categories, but
+// drops channel-level <category> (common in WordPress and Atom feeds), so we
+// additionally scrape those from the raw XML before the first <item>/<entry>.
+function extractFeedCategories(xml: string): string[] {
+  const out = new Set<string>();
+  const firstEntry = xml.search(/<(item|entry)[\s>]/i);
+  const header = firstEntry === -1 ? xml : xml.slice(0, firstEntry);
+
+  // Attribute form: <category text="X" />, <itunes:category text="X"/>, <category term="X"/>
+  const attrRe = /<category\b[^>]*?\b(?:text|term)\s*=\s*["']([^"']+)["'][^>]*\/?>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = attrRe.exec(header)) !== null) {
+    const v = decodeXmlEntities(m[1]).trim();
+    if (v) out.add(v);
   }
 
-  const store = readStore();
-  const configuredPin = String(store.auth?.pin || '1984');
-
-  // Strict verification: PIN is mandatory and must match configured passcode
-  if (!pin || String(pin) !== configuredPin) {
-    recordFailedLogin(clientIp);
-    return res.status(401).json({
-      success: false,
-      message: 'Incorrect PIN passcode.'
-    });
+  // Element form: <category>Design</category> (possibly wrapped in CDATA)
+  const elRe = /<category\b[^>]*>([\s\S]*?)<\/category>/gi;
+  while ((m = elRe.exec(header)) !== null) {
+    const v = m[1]
+      .replace(/<!\[CDATA\[|\]\]>/g, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (v) out.add(v);
   }
+  return Array.from(out);
+}
 
-  resetFailedLogin(clientIp);
-  const sessionToken = generateSessionToken();
+function decodeXmlEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'");
+}
 
-  return res.json({
-    success: true,
-    token: sessionToken,
-    user: {
-      email: store.auth?.email || 'rol.asthana@purvasa.uk',
-      authRequired: store.auth?.authRequired ?? true
-    }
+// Stash the author-declared categories on the parsed feed object.
+function attachFeedCategories(feed: any, xml: string) {
+  try {
+    const channelCategories = extractFeedCategories(xml);
+    const itunes = Array.isArray(feed?.itunes?.categories) ? feed.itunes.categories : [];
+    feed.channelCategories = Array.from(new Set([...channelCategories, ...itunes]));
+  } catch {
+    feed.channelCategories = [];
+  }
+}
+
+// Combine channel + per-item author categories into one signal for the classifier.
+function collectAuthorCategories(feed: any, items: any[]): string[] {
+  const out = new Set<string>();
+  (feed?.channelCategories || []).forEach((c: string) => out.add(String(c)));
+  (feed?.itunes?.categories || []).forEach((c: string) => out.add(String(c)));
+  (items || []).forEach((it) => {
+    if (Array.isArray(it?.categories)) it.categories.forEach((c: string) => out.add(String(c)));
   });
-});
-
-// Verify existing session token or auth requirement
-app.get('/api/auth/verify', (req: Request, res: Response) => {
-  const store = readStore();
-  const authRequired = store.auth?.authRequired !== false;
-
-  if (!authRequired) {
-    return res.json({
-      valid: true,
-      authRequired: false,
-      user: {
-        email: store.auth?.email || 'rol.asthana@purvasa.uk',
-        authRequired: false
-      }
-    });
-  }
-
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ')
-    ? authHeader.slice(7).trim()
-    : (req.headers['x-session-token'] as string);
-
-  if (isValidToken(token)) {
-    return res.json({
-      valid: true,
-      authRequired: true,
-      user: {
-        email: store.auth?.email || 'rol.asthana@purvasa.uk',
-        authRequired: true
-      }
-    });
-  }
-
-  return res.status(401).json({
-    valid: false,
-    authRequired: true,
-    message: 'Session passcode token is required or expired.'
-  });
-});
-
-// Toggle passcode requirement
-app.post('/api/auth/toggle-required', requireAuth, (req: Request, res: Response) => {
-  const { authRequired } = req.body;
-  const store = readStore();
-  if (!store.auth) store.auth = { ...DEFAULT_STORE.auth };
-  store.auth.authRequired = Boolean(authRequired);
-  writeStore(store);
-  res.json({ success: true, authRequired: store.auth.authRequired });
-});
-
-app.post('/api/auth/change-pin', requireAuth, (req: Request, res: Response) => {
-  const { currentPin, newPin } = req.body;
-  const store = readStore();
-
-  if (String(currentPin) !== String(store.auth?.pin)) {
-    return res.status(401).json({ success: false, message: 'Current PIN does not match.' });
-  }
-
-  if (!newPin || String(newPin).length < 4) {
-    return res.status(400).json({ success: false, message: 'New PIN must be at least 4 digits.' });
-  }
-
-  store.auth.pin = String(newPin);
-  writeStore(store);
-  res.json({ success: true, message: 'PIN successfully updated.' });
-});
+  return Array.from(out).filter(Boolean);
+}
 
 // Parse helper with direct safe fetch and SSRF guard
 async function parseFeedCandidate(candidateUrl: string) {
@@ -489,6 +367,7 @@ async function parseFeedCandidate(candidateUrl: string) {
       if (text && (text.includes('<rss') || text.includes('<feed') || text.includes('<xml') || text.includes('xmlns') || text.trim().startsWith('<?xml'))) {
         const feed = await rssParser.parseString(text);
         if (feed && feed.items) {
+          attachFeedCategories(feed, text);
           return feed;
         }
       }
@@ -508,6 +387,7 @@ async function parseFeedCandidate(candidateUrl: string) {
           const fbText = await fbRes.text();
           const fbFeed = await rssParser.parseString(fbText);
           if (fbFeed && fbFeed.items) {
+            attachFeedCategories(fbFeed, fbText);
             return fbFeed;
           }
         }
@@ -741,11 +621,13 @@ app.post('/api/feeds/fetch', async (req: Request, res: Response) => {
       };
     });
 
+    const authorCategories = collectAuthorCategories(feed, feed.items || []);
     const suggestions = suggestCategoriesAndTags(
       feedUrl || url,
       feed.title || '',
       feed.description || '',
-      items
+      items,
+      authorCategories
     );
 
     res.json({
@@ -836,6 +718,8 @@ function searchNetNewsWireCatalog(query: string) {
   // Dynamic real feed generation for custom user queries (e.g., cooking, finance, history, etc.)
   const capitalized = query.charAt(0).toUpperCase() + query.slice(1);
   const cleanQuerySlug = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const substackUrl = `https://${cleanQuerySlug}.substack.com/feed`;
+  const substackCurated = getCuratedFolder(substackUrl);
 
   return [
     {
@@ -847,10 +731,10 @@ function searchNetNewsWireCatalog(query: string) {
     },
     {
       title: `${capitalized} Substack Publication`,
-      url: `https://${cleanQuerySlug}.substack.com/feed`,
+      url: substackUrl,
       description: `Independent writing and newsletters covering ${query}.`,
-      folder: 'Culture & Books',
-      keywords: [query.toLowerCase(), 'substack', 'newsletter']
+      folder: substackCurated?.folder || 'Culture & Books',
+      keywords: [query.toLowerCase(), 'substack', 'newsletter', ...(substackCurated?.tags || [])]
     },
     {
       title: `Hacker News Discussions: ${capitalized}`,
@@ -962,8 +846,10 @@ const handleRecommendedTechFeeds = async (_req: Request, res: Response) => {
   ];
 
   try {
+    const folderList = CANONICAL_FOLDERS.map((f) => `'${f}'`).join(', ');
     const prompt = `Use Google Search to find 8 to 10 of the most popular, high-quality, and active technology publications, developer blogs, and tech news websites that provide public RSS or Atom feeds.
-Find each publication's name, their valid RSS/Atom feed URL, homepage URL, a concise 1-sentence description, and an appropriate category folder (e.g. 'Tech & Architecture', 'AI & Machine Learning', 'Indie Mac & Swift', 'Developer News').
+Find each publication's name, their valid RSS/Atom feed URL, homepage URL, a concise 1-sentence description, and a category folder chosen from EXACTLY this list (never invent a folder): ${folderList}.
+Classification rule: pick the folder that reflects the publication's DOMINANT subject, not every topic it occasionally covers. An AI/technology interview publication that sometimes discusses history or culture belongs to 'AI & Machine Learning'; a broad technology news site belongs to 'Tech & Architecture'.
 Include prominent tech sources like The Verge, Hacker News (news.ycombinator.com/rss), Ars Technica, 9to5Mac, Simon Willison, or TechCrunch.
 
 Respond ONLY with a valid JSON array matching this format:
@@ -1009,12 +895,14 @@ Respond ONLY with a valid JSON array matching this format:
           if (feedUrl.includes('hnrss.org')) {
             feedUrl = 'https://news.ycombinator.com/rss';
           }
+          const curated = getCuratedFolder(feedUrl);
+          const proposedFolder = String(f.folder || 'Tech & Architecture').trim();
           return {
             title: String(f.title).trim(),
             url: feedUrl,
             homeUrl: f.homeUrl ? String(f.homeUrl).trim() : f.url,
             description: String(f.description || 'Popular technology publication.').trim(),
-            folder: String(f.folder || 'Tech & Architecture').trim(),
+            folder: curated ? curated.folder : proposedFolder,
             favicon: host ? `https://www.google.com/s2/favicons?domain=${host}&sz=32` : undefined
           };
         });
@@ -1041,102 +929,356 @@ Respond ONLY with a valid JSON array matching this format:
 app.get('/api/ai/recommended-tech-feeds', handleRecommendedTechFeeds);
 app.post('/api/ai/recommended-tech-feeds', handleRecommendedTechFeeds);
 
-// AI Briefing: Synthesize unread items into an executive briefing
+// ======================== AI DAILY BRIEFING (MORNING DIGEST) ========================
+// One digest per day: a single paragraph, the day's recurring themes, and a ranked
+// Top 10. The Gemini path and the heuristic fallback share the same input
+// normalisation and the same response shape, so the client never has to branch on
+// which one produced the digest — only on `source`/`poweredBy` for honesty.
+
+const BRIEFING_MAX_INPUT = 30; // stories handed to Gemini
+const BRIEFING_MAX_STORIES = 10; // "Top 10 stories"
+const BRIEFING_FEED_CAP = 4; // prefer breadth over one prolific feed
+const STORY_FEED_CAP = 3; // ...tighter still for the published Top 10
+
+// Generic newsroom filler that would otherwise dominate the keyword tally.
+const TITLE_STOPWORDS = new Set([
+  'about', 'after', 'again', 'against', 'almost', 'along', 'already', 'also', 'although', 'always', 'among',
+  'another', 'around', 'article', 'articles', 'back', 'because', 'been', 'before', 'being', 'below', 'best',
+  'better', 'between', 'both', 'bring', 'brought', 'called', 'cannot', 'could', 'daily', 'does', 'doing', 'done',
+  'down', 'during', 'each', 'early', 'either', 'else', 'even', 'ever', 'every', 'first', 'following', 'from',
+  'episode', 'feed', 'feeds', 'getting', 'give', 'goes', 'going', 'good', 'great', 'have', 'having', 'here',
+  'interview', 'into', 'just', 'keep', 'know', 'month', 'number', 'podcast',
+  'last', 'later', 'least', 'less', 'like', 'little', 'made', 'make', 'many', 'might', 'more', 'most', 'much',
+  'must', 'need', 'never', 'news', 'next', 'nothing', 'often', 'only', 'other', 'others', 'over', 'part',
+  'people', 'perhaps', 'post', 'published', 'really', 'report', 'reports', 'right', 'said', 'same', 'says',
+  'second', 'seen', 'should', 'show', 'shown', 'since', 'some', 'still', 'story', 'stories', 'such', 'take',
+  'than', 'that', 'their', 'them', 'then', 'there', 'these', 'they', 'thing', 'things', 'this', 'those', 'three',
+  'through', 'time', 'today', 'told', 'took', 'toward', 'under', 'until', 'update', 'updates', 'upon', 'used',
+  'using', 'very', 'want', 'week', 'well', 'were', 'what', 'when', 'where', 'which', 'while', 'will', 'with',
+  'within', 'without', 'work', 'working', 'would', 'year', 'years', 'your'
+]);
+
+interface BriefingCandidate {
+  id?: string;
+  title: string;
+  feedTitle?: string;
+  link?: string;
+  pubDate?: string;
+  snippet?: string;
+}
+
+function normalizeTitle(title: string): string {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function publishTime(value?: string): number {
+  const t = new Date(String(value || '')).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * Newest first, one row per distinct headline, and a per-feed cap so a single
+ * prolific publication cannot own the digest. If the cap leaves us short, the
+ * remaining stories are appended in order: breadth is preferred, never padded.
+ */
+function rankBriefingStories(
+  candidates: BriefingCandidate[],
+  limit: number,
+  perFeedCap: number
+): BriefingCandidate[] {
+  const picked: BriefingCandidate[] = [];
+  const pickedKeys = new Set<string>();
+  const perFeed = new Map<string, number>();
+  const keyOf = (c: BriefingCandidate) => `${normalizeTitle(c.title)}|${c.feedTitle || ''}`;
+
+  for (const c of candidates) {
+    if (picked.length >= limit) break;
+    const key = keyOf(c);
+    if (pickedKeys.has(key)) continue;
+    const feedKey = (c.feedTitle || '').toLowerCase();
+    const used = perFeed.get(feedKey) || 0;
+    if (used >= perFeedCap) continue;
+    perFeed.set(feedKey, used + 1);
+    pickedKeys.add(key);
+    picked.push(c);
+  }
+
+  for (const c of candidates) {
+    if (picked.length >= limit) break;
+    const key = keyOf(c);
+    if (pickedKeys.has(key)) continue;
+    pickedKeys.add(key);
+    picked.push(c);
+  }
+
+  return picked;
+}
+
+/** Normalise, drop duplicates, newest first. No capping here. */
+function dedupeBriefingArticles(articles: any[]): BriefingCandidate[] {
+  const seen = new Set<string>();
+  const out: BriefingCandidate[] = [];
+  (articles || [])
+    .map((a) => ({
+      id: typeof a?.id === 'string' && a.id ? a.id : undefined,
+      title: String(a?.title || '').replace(/\s+/g, ' ').trim(),
+      feedTitle: String(a?.feedTitle || '').replace(/\s+/g, ' ').trim() || undefined,
+      link: typeof a?.link === 'string' ? a.link : undefined,
+      pubDate: typeof a?.pubDate === 'string' ? a.pubDate : undefined,
+      snippet: String(a?.snippet || a?.content || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 320)
+    }))
+    .filter((c) => c.title.length > 0)
+    .sort((a, b) => publishTime(b.pubDate) - publishTime(a.pubDate))
+    .forEach((c) => {
+      const key = normalizeTitle(c.title);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(c);
+    });
+  return out;
+}
+
+function titleCaseWord(word: string): string {
+  if (word.length <= 3) return word.toUpperCase();
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+/**
+ * Fallback themes. Real signal rather than a placeholder: recurring keywords
+ * across today's headlines, and if nothing recurs, where the coverage came from.
+ */
+function deriveHeuristicThemes(stories: BriefingCandidate[]) {
+  const counts = new Map<string, Set<number>>();
+  stories.forEach((c, index) => {
+    const words = `${c.title} ${c.snippet || ''}`.toLowerCase().match(/[a-z][a-z0-9+#.-]{3,}/g) || [];
+    const seen = new Set<string>();
+    for (const raw of words) {
+      const word = raw.replace(/^[.-]+|[.-]+$/g, '');
+      if (word.length < 4 || TITLE_STOPWORDS.has(word) || seen.has(word)) continue;
+      seen.add(word);
+      const set = counts.get(word) || new Set<number>();
+      set.add(index);
+      counts.set(word, set);
+    }
+  });
+
+  const recurring = Array.from(counts.entries())
+    .filter(([, ids]) => ids.size >= 2)
+    .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))
+    .slice(0, 5)
+    .map(([word, ids]) => ({
+      label: titleCaseWord(word),
+      description: `${ids.size} of ${stories.length} stories mention "${word}".`,
+      storyCount: ids.size
+    }));
+
+  if (recurring.length >= 2) return recurring;
+
+  const perFeed = new Map<string, number>();
+  stories.forEach((c) => {
+    const label = c.feedTitle || 'Subscriptions';
+    perFeed.set(label, (perFeed.get(label) || 0) + 1);
+  });
+  return Array.from(perFeed.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 5)
+    .map(([label, count]) => ({
+      label,
+      description: `${count} of ${stories.length} stories came from ${label}.`,
+      storyCount: count
+    }));
+}
+
+function buildHeuristicParagraph(stories: BriefingCandidate[], total: number): string {
+  const feeds = Array.from(new Set(stories.map((s) => s.feedTitle).filter(Boolean))) as string[];
+  const feedList = feeds.slice(0, 3).join(', ');
+  const lead = stories[0];
+  const second = stories[1];
+  const parts: string[] = [];
+
+  parts.push(
+    `Your digest covers ${total} unread ${total === 1 ? 'story' : 'stories'}${
+      feedList ? ` from ${feedList}` : ''
+    }${feeds.length > 3 ? ` and ${feeds.length - 3} more` : ''}.`
+  );
+  if (lead) {
+    parts.push(`The newest is "${lead.title}"${lead.feedTitle ? ` (${lead.feedTitle})` : ''}.`);
+  }
+  if (second) {
+    parts.push(`It is followed by "${second.title}"${second.feedTitle ? ` (${second.feedTitle})` : ''}.`);
+  }
+  return parts.join(' ');
+}
+
+// AI Briefing: synthesize the day's unread items into a Morning Digest
 app.post('/api/ai/briefing', async (req: Request, res: Response) => {
   const { articles } = req.body;
   if (!Array.isArray(articles) || articles.length === 0) {
     return res.status(400).json({ error: 'No unread articles provided to summarize.' });
   }
 
-  // Sample top unread stories (up to 20) with clean snippets
-  const sample = articles.slice(0, 20).map((a: any) => ({
-    title: (a.title || 'Untitled').trim(),
-    feedTitle: (a.feedTitle || '').trim(),
-    snippet: (a.snippet || a.content || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 320),
-    pubDate: a.pubDate
-  }));
-
-  try {
-    if (process.env.GEMINI_API_KEY) {
-      const prompt = `You are an expert executive news editor. Review these ${sample.length} unread RSS articles and create a high-impact briefing:\n\n${JSON.stringify(sample, null, 2)}\n\nInstructions:
-1. "executiveSummary": Write a 2 to 3 sentence overview of major themes, trends, or overarching news across all unread stories.
-2. "bulletPoints": Provide 3 to 5 high-impact bullet points summarizing the top individual news items.
-For each bullet point, include:
-- "headline": Short, punchy headline (5 to 10 words)
-- "summary": 1 to 2 sentence crisp summary of the development
-- "feedTitle": The source publication or author if known`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          systemInstruction: 'You are an intelligent executive news editor for a premium RSS reader. Synthesize unread articles into a concise, high-signal executive briefing.',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              executiveSummary: {
-                type: Type.STRING,
-                description: 'A 2-3 sentence overview of major themes across all unread news.'
-              },
-              bulletPoints: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    headline: { type: Type.STRING },
-                    summary: { type: Type.STRING },
-                    feedTitle: { type: Type.STRING }
-                  },
-                  required: ['headline', 'summary']
-                },
-                description: '3 to 5 high-impact bullet points summarizing the top individual news items.'
-              }
-            },
-            required: ['executiveSummary', 'bulletPoints']
-          }
-        }
-      });
-
-      const text = response.text?.trim();
-      if (text) {
-        const parsed = JSON.parse(text);
-        if (parsed.executiveSummary && Array.isArray(parsed.bulletPoints) && parsed.bulletPoints.length > 0) {
-          return res.json({
-            success: true,
-            executiveSummary: parsed.executiveSummary,
-            bulletPoints: parsed.bulletPoints,
-            articlesCount: sample.length,
-            generatedAt: new Date().toISOString(),
-            poweredBy: 'Gemini 3.8 Flash'
-          });
-        }
-      }
-    }
-  } catch (err: any) {
-    console.warn('[server] Gemini briefing note:', err.message);
+  const deduped = dedupeBriefingArticles(articles);
+  if (deduped.length === 0) {
+    return res.status(400).json({ error: 'No usable articles provided to summarize.' });
   }
 
-  // Heuristic synthesis fallback (e.g., if quota is exhausted or offline)
-  const topArticles = sample.slice(0, 5);
-  const feedNames = Array.from(new Set(sample.map((s: any) => s.feedTitle).filter(Boolean)));
-  const feedsStr = feedNames.length > 0 ? feedNames.slice(0, 3).join(', ') : 'your subscribed feeds';
+  const sample = rankBriefingStories(deduped, BRIEFING_MAX_INPUT, BRIEFING_FEED_CAP);
+  const fallbackStories = rankBriefingStories(deduped, BRIEFING_MAX_STORIES, STORY_FEED_CAP);
+  const generatedAt = new Date().toISOString();
 
-  const fallbackExecutiveSummary = `Your briefing synthesizes ${sample.length} unread dispatches from ${feedsStr}. Highlights include key technology announcements, platform updates, and developer discussions across your feeds.`;
+  if (process.env.GEMINI_API_KEY) {
+    const prompt = `You are the editor of a daily morning news digest. Below are ${
+      sample.length
+    } unread stories from a personal RSS reader, newest first. Each has an "id", title, feed, publish date and an excerpt.
 
-  const fallbackBulletPoints = topArticles.map((a: any) => ({
-    headline: a.title,
-    summary: a.snippet || `Latest updates reported from ${a.feedTitle || 'source'}.`,
-    feedTitle: a.feedTitle || 'RSS'
-  }));
+${JSON.stringify(sample, null, 2)}
 
+Produce a digest with exactly these three parts:
+1. "paragraph": ONE paragraph of 3 to 5 sentences summarising what matters across ALL of these stories — the through-line of the day. No bullet points, no preamble, never start with "In today's briefing".
+2. "themes": 3 to 5 broad themes that recur across the stories. For each give "label" (2 to 4 words, Title Case), "description" (one short sentence on what is happening under that theme) and "storyCount" (how many of the supplied stories fall under it).
+3. "topStories": the ${BRIEFING_MAX_STORIES} most significant stories, most significant first. For each give "id" (copied EXACTLY from the supplied story), "title" (the story's original title, unchanged) and "whyItMatters" (one short sentence).
+
+Only use the supplied stories. Never invent stories, sources, facts or ids.`;
+
+    // A three-rung model ladder. The digest is generated once a day, so a single
+    // transient 503 must not cost the reader their AI digest for the rest of the
+    // day (they would get keyword themes instead). The alias and the older pinned
+    // generation are the escape hatches; 503s come back in milliseconds, so the
+    // extra attempts are effectively free.
+    const briefingModels = [
+      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+      { id: 'gemini-flash-latest', label: 'Gemini Flash (latest)' },
+      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' }
+    ];
+
+    for (const { id: modelId, label: modelLabel } of briefingModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelId,
+          contents: prompt,
+          config: {
+            systemInstruction:
+              'You are an intelligent executive news editor for a premium RSS reader. You distil a day of unread stories into one honest, high-signal morning digest grounded strictly in the supplied stories.',
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                paragraph: {
+                  type: Type.STRING,
+                  description: 'One paragraph of 3-5 sentences covering the through-line of all supplied stories.'
+                },
+                themes: {
+                  type: Type.ARRAY,
+                  description: '3 to 5 themes recurring across the supplied stories.',
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      label: { type: Type.STRING, description: '2 to 4 words, Title Case.' },
+                      description: { type: Type.STRING },
+                      storyCount: { type: Type.INTEGER }
+                    },
+                    required: ['label']
+                  }
+                },
+                topStories: {
+                  type: Type.ARRAY,
+                  description: 'The 10 most significant stories, most significant first.',
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING, description: 'The exact id copied from the supplied story.' },
+                      title: { type: Type.STRING },
+                      whyItMatters: { type: Type.STRING }
+                    },
+                    required: ['id', 'title']
+                  }
+                }
+              },
+              required: ['paragraph', 'themes', 'topStories']
+            }
+          }
+        });
+
+        const text = response.text?.trim();
+        if (text) {
+          const parsed = JSON.parse(text);
+          const byId = new Map(sample.filter((s) => s.id).map((s) => [String(s.id), s]));
+          const byTitle = new Map(sample.map((s) => [normalizeTitle(s.title), s]));
+
+          // Hydrate every ranked story from our own input: a story the model was
+          // never given (or a mangled id) is dropped rather than published.
+          const topStories = (Array.isArray(parsed?.topStories) ? parsed.topStories : [])
+            .map((s: any) => {
+              const match =
+                (s?.id ? byId.get(String(s.id)) : undefined) ||
+                byTitle.get(normalizeTitle(String(s?.title || '')));
+              if (!match) return null;
+              const why = typeof s?.whyItMatters === 'string' ? s.whyItMatters.trim() : '';
+              return {
+                id: match.id,
+                title: match.title,
+                feedTitle: match.feedTitle,
+                link: match.link,
+                pubDate: match.pubDate,
+                whyItMatters: why || undefined
+              };
+            })
+            .filter(Boolean)
+            // The model can echo the same story twice (typically once with a mangled
+            // id and once by title). Keep the highest-ranked copy only.
+            .filter((s: any, index: number, all: any[]) => all.findIndex((o) => o.id === s.id) === index)
+            .slice(0, BRIEFING_MAX_STORIES);
+
+          const themes = (Array.isArray(parsed?.themes) ? parsed.themes : [])
+            .filter((t: any) => t && typeof t.label === 'string' && t.label.trim())
+            .slice(0, 5)
+            .map((t: any) => ({
+              label: String(t.label).trim(),
+              description: typeof t.description === 'string' ? t.description.trim() : undefined,
+              storyCount: Number.isFinite(Number(t.storyCount)) ? Number(t.storyCount) : undefined
+            }));
+
+          const paragraph = typeof parsed?.paragraph === 'string' ? parsed.paragraph.trim() : '';
+
+          if (paragraph && themes.length > 0 && topStories.length >= 3) {
+            return res.json({
+              success: true,
+              paragraph,
+              themes,
+              topStories,
+              articlesCount: sample.length,
+              generatedAt,
+              poweredBy: modelLabel,
+              source: 'gemini'
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[server] Gemini briefing note (${modelId}):`, err.message);
+      }
+    }
+  }
+
+  // Heuristic synthesis (no API key, quota exhausted, or an unusable response)
   return res.json({
     success: true,
-    executiveSummary: fallbackExecutiveSummary,
-    bulletPoints: fallbackBulletPoints,
+    paragraph: buildHeuristicParagraph(fallbackStories, sample.length),
+    // Themes describe the day's whole unread input (not just the published ten),
+    // so their counts stay consistent with `articlesCount` in the paragraph.
+    themes: deriveHeuristicThemes(sample),
+    topStories: fallbackStories,
     articlesCount: sample.length,
-    generatedAt: new Date().toISOString(),
-    poweredBy: 'Smart Synthesizer (Fallback)'
+    generatedAt,
+    poweredBy: 'Smart Synthesizer (Fallback)',
+    source: 'fallback'
   });
 });
 
@@ -1311,12 +1453,11 @@ app.get('/api/storage', (_req: Request, res: Response) => {
     starredArticleIds: store.starredArticleIds || [],
     archivedArticleIds: store.archivedArticleIds || [],
     deletedArticleIds: store.deletedArticleIds || [],
-    deletedFeedUrls: store.deletedFeedUrls || [],
-    authRequired: store.auth?.authRequired ?? true
+    deletedFeedUrls: store.deletedFeedUrls || []
   });
 });
 
-app.post('/api/storage', requireAuth, (req: Request, res: Response) => {
+app.post('/api/storage', (req: Request, res: Response) => {
   const { feeds, readArticleIds, starredArticleIds, archivedArticleIds, deletedArticleIds, deletedFeedUrls } = req.body;
   const store = readStore();
 
@@ -1332,7 +1473,7 @@ app.post('/api/storage', requireAuth, (req: Request, res: Response) => {
 });
 
 // Atomic Article Actions: delete, archive, unarchive, favorite, unfavorite
-app.post('/api/articles/action', requireAuth, (req: Request, res: Response) => {
+app.post('/api/articles/action', (req: Request, res: Response) => {
   const { action, articleId, articleIds } = req.body;
   const ids: string[] = Array.isArray(articleIds) ? articleIds : (articleId ? [articleId] : []);
   if (!action || ids.length === 0) {
@@ -1352,6 +1493,8 @@ app.post('/api/articles/action', requireAuth, (req: Request, res: Response) => {
     if (action === 'delete') {
       deletedSet.add(id);
       archivedSet.delete(id);
+    } else if (action === 'restore') {
+      deletedSet.delete(id);
     } else if (action === 'archive') {
       archivedSet.add(id);
     } else if (action === 'unarchive') {
@@ -1392,7 +1535,7 @@ function escapeXml(unsafe: string): string {
 }
 
 // OPML Import & Export
-app.post('/api/opml/import', requireAuth, async (req: Request, res: Response) => {
+app.post('/api/opml/import', async (req: Request, res: Response) => {
   const { opmlContent } = req.body;
   if (!opmlContent) {
     return res.status(400).json({ error: 'OPML XML content is required' });
