@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Feed, Article } from '../types';
+import { Feed, Article, AIBriefing } from '../types';
 
 // Storage keys with backward compatibility support
 const KEYS = {
@@ -22,7 +22,9 @@ const KEYS = {
   LEGACY_CACHED_ARTICLES: 'nnw_cached_articles',
   STORAGE_MODE: 'rssnewsfeeds_storage_mode',
   LEGACY_STORAGE_MODE: 'nnw_storage_mode',
-  HAS_USER_DATA: 'rssnewsfeeds_has_user_data'
+  HAS_USER_DATA: 'rssnewsfeeds_has_user_data',
+  DAILY_BRIEFING: 'rssnewsfeeds_daily_briefing',
+  DAILY_BRIEFING_ATTEMPT: 'rssnewsfeeds_daily_briefing_attempt'
 };
 
 function safeGet(key: string, legacyKey?: string): string | null {
@@ -161,6 +163,61 @@ export function saveLocalCachedArticles(articles: Article[]): void {
       safeSet(KEYS.CACHED_ARTICLES, JSON.stringify(articles.slice(0, 200)));
     } catch {}
   }
+}
+
+/**
+ * Local calendar day as YYYY-MM-DD. The Morning Digest is a per-day artefact, so
+ * "today" must be the reader's local day, not UTC — otherwise a digest generated
+ * at 00:30 in UTC+13 would be filed under yesterday.
+ */
+export function getLocalDateKey(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Today's digest, or null when the stored one belongs to an earlier day.
+ * Keeps the reader from re-spending a Gemini call on every load.
+ */
+export function getLocalDailyBriefing(): AIBriefing | null {
+  const raw = safeGet(KEYS.DAILY_BRIEFING);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.briefing && parsed.date === getLocalDateKey()) {
+      return parsed.briefing as AIBriefing;
+    }
+  } catch {}
+  return null;
+}
+
+export function saveLocalDailyBriefing(briefing: AIBriefing): void {
+  try {
+    safeSet(KEYS.DAILY_BRIEFING, JSON.stringify({ date: getLocalDateKey(), briefing }));
+  } catch (e) {
+    console.warn('Could not persist daily briefing:', e);
+  }
+}
+
+export function clearLocalDailyBriefing(): void {
+  try {
+    localStorage.removeItem(KEYS.DAILY_BRIEFING);
+  } catch {}
+}
+
+/**
+ * Date stamp of the last automatic generation attempt. Written *before* the
+ * request so a failed or rate-limited run does not retry on every reload; the
+ * reader can still regenerate by hand.
+ */
+export function getLocalBriefingAttemptDate(): string | null {
+  return safeGet(KEYS.DAILY_BRIEFING_ATTEMPT);
+}
+
+export function markLocalBriefingAttempt(dateKey: string = getLocalDateKey()): void {
+  safeSet(KEYS.DAILY_BRIEFING_ATTEMPT, dateKey);
 }
 
 export function getStorageMode(): 'iphone' | 'icloud' {

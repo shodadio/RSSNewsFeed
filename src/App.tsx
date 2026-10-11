@@ -12,7 +12,7 @@ import { AddFeedModal } from './components/AddFeedModal';
 import { SettingsModal } from './components/SettingsModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { UndoToast } from './components/UndoToast';
-import { Feed, Article, SmartFilter, AIBriefing, DEFAULT_FOLDER } from './types';
+import { Feed, Article, SmartFilter, AIBriefing, AIBriefingStory, DEFAULT_FOLDER } from './types';
 import {
   getLocalFeeds,
   saveLocalFeeds,
@@ -22,7 +22,13 @@ import {
   saveLocalCachedArticles,
   hasLocalUserData,
   getLocalDeletedFeedUrls,
-  saveLocalDeletedFeedUrls
+  saveLocalDeletedFeedUrls,
+  getLocalDateKey,
+  getLocalDailyBriefing,
+  saveLocalDailyBriefing,
+  clearLocalDailyBriefing,
+  getLocalBriefingAttemptDate,
+  markLocalBriefingAttempt
 } from './utils/storage';
 import { getAuthHeaders, AUTH_EXPIRED_EVENT } from './utils/api';
 import { formatTag } from './utils/tagUtils';
@@ -138,8 +144,9 @@ export default function App() {
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoSeqRef = useRef(0);
 
-  // AI Briefing State
-  const [aiBriefing, setAiBriefing] = useState<AIBriefing | null>(null);
+  // AI Briefing State. The digest is a per-day artefact, so it is hydrated from
+  // device storage and only regenerated when it is stale, dismissed, or asked for.
+  const [aiBriefing, setAiBriefing] = useState<AIBriefing | null>(() => getLocalDailyBriefing());
   const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
   const [isBriefingExpanded, setIsBriefingExpanded] = useState(true);
 
@@ -777,19 +784,27 @@ export default function App() {
     }).catch(console.error);
   }, [syncStateWithServer]);
 
-  // AI Briefing Handler: Synthesizes unread items into an executive briefing
-  const handleGenerateBriefing = useCallback(async () => {
-    // Gather text, titles, and snippets from the unread articles currently loaded
+  // ======================== AI DAILY BRIEFING (MORNING DIGEST) ========================
+  // The digest covers the reader's unread stories from the last 24 hours, newest
+  // first. When the day is quiet we widen to every unread story, so a built-in
+  // fallback day still produces a useful digest instead of an empty one.
+  const collectBriefingArticles = useCallback(() => {
     const unread = articles.filter(
       (a) => !deletedArticleIds.has(a.id) && !archivedArticleIds.has(a.id) && !readArticleIds.has(a.id)
     );
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const fresh = unread.filter((a) => {
+      const t = new Date(a.pubDate).getTime();
+      return Number.isFinite(t) && t >= cutoff;
+    });
+    const pool = (fresh.length > 0 ? fresh : unread).slice();
+    pool.sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
+    return pool;
+  }, [articles, deletedArticleIds, archivedArticleIds, readArticleIds]);
 
-    // If no unread items, summarize current displayed articles or top active
-    const targetArticles = unread.length > 0 ? unread : displayedArticles.slice(0, 15);
-
-    if (targetArticles.length === 0) {
-      return;
-    }
+  const handleGenerateBriefing = useCallback(async () => {
+    const pool = collectBriefingArticles();
+    if (pool.length === 0) return;
 
     setIsGeneratingBriefing(true);
     setIsBriefingExpanded(true);
@@ -802,11 +817,12 @@ export default function App() {
           ...getAuthHeaders()
         },
         body: JSON.stringify({
-          articles: targetArticles.map((a) => ({
+          articles: pool.slice(0, 40).map((a) => ({
             id: a.id,
             title: a.title,
             snippet: a.snippet,
-            content: a.content,
+            content: (a.content || '').slice(0, 1200),
+            link: a.link,
             feedTitle: a.feedTitle,
             pubDate: a.pubDate
           }))
@@ -815,14 +831,19 @@ export default function App() {
 
       if (res.ok) {
         const data = await res.json();
-        if (data.success) {
-          setAiBriefing({
-            executiveSummary: data.executiveSummary,
-            bulletPoints: data.bulletPoints,
-            articlesCount: data.articlesCount || targetArticles.length,
+        if (data.success && typeof data.paragraph === 'string') {
+          const briefing: AIBriefing = {
+            paragraph: data.paragraph,
+            themes: Array.isArray(data.themes) ? data.themes : [],
+            topStories: Array.isArray(data.topStories) ? data.topStories : [],
+            articlesCount: data.articlesCount || pool.length,
             generatedAt: data.generatedAt || new Date().toISOString(),
-            poweredBy: data.poweredBy
-          });
+            date: getLocalDateKey(),
+            poweredBy: data.poweredBy,
+            source: data.source === 'gemini' ? 'gemini' : 'fallback'
+          };
+          setAiBriefing(briefing);
+          saveLocalDailyBriefing(briefing);
           setIsBriefingExpanded(true);
         }
       }
@@ -831,15 +852,48 @@ export default function App() {
     } finally {
       setIsGeneratingBriefing(false);
     }
-  }, [articles, displayedArticles, deletedArticleIds, archivedArticleIds, readArticleIds]);
+  }, [collectBriefingArticles]);
 
   const handleToggleBriefingCollapse = useCallback(() => {
     setIsBriefingExpanded((prev) => !prev);
   }, []);
 
   const handleDismissBriefing = useCallback(() => {
+    // Dismissing hides the digest for the rest of the day: the stored copy is
+    // dropped and the day's attempt stamp (already written) keeps it from being
+    // regenerated on the next load. Tomorrow it comes back on its own.
     setAiBriefing(null);
+    clearLocalDailyBriefing();
+    markLocalBriefingAttempt(getLocalDateKey());
   }, []);
+
+  // Morning Digest: generate once per local day, and only after the first refresh
+  // has completed so the digest covers today's stories rather than yesterday's
+  // cache. The attempt is stamped *before* the request, so a failure or a rate
+  // limit never becomes a retry loop on every reload; the reader can always
+  // regenerate by hand with the refresh control on the card.
+  useEffect(() => {
+    if (aiBriefing || isGeneratingBriefing || isRefreshing) return;
+    if (articles.length === 0 || lastRefreshedAt === null) return;
+    const today = getLocalDateKey();
+    if (getLocalBriefingAttemptDate() === today) return;
+    const unreadNow = articles.filter(
+      (a) => !deletedArticleIds.has(a.id) && !archivedArticleIds.has(a.id) && !readArticleIds.has(a.id)
+    ).length;
+    if (unreadNow === 0) return;
+    markLocalBriefingAttempt(today);
+    void handleGenerateBriefing();
+  }, [
+    aiBriefing,
+    isGeneratingBriefing,
+    isRefreshing,
+    articles,
+    lastRefreshedAt,
+    deletedArticleIds,
+    archivedArticleIds,
+    readArticleIds,
+    handleGenerateBriefing
+  ]);
 
   // Selected article reference
   const selectedArticle = useMemo(() => {
@@ -881,6 +935,19 @@ export default function App() {
     }
     if (isMobile) {
       setMobilePane('reader');
+    }
+  };
+
+  // A ranked digest story opens in the reader while it is still in the library,
+  // and falls back to the publisher's page when it is not in the local cache.
+  const handleSelectBriefingStory = (story: AIBriefingStory) => {
+    const match = story.id ? articles.find((a) => a.id === story.id) : undefined;
+    if (match) {
+      handleSelectArticle(match);
+      return;
+    }
+    if (story.link) {
+      window.open(story.link, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -1017,6 +1084,7 @@ export default function App() {
             onGenerateBriefing={handleGenerateBriefing}
             onToggleBriefingCollapse={handleToggleBriefingCollapse}
             onDismissBriefing={handleDismissBriefing}
+            onSelectBriefingStory={handleSelectBriefingStory}
           />
 
           <Timeline
@@ -1045,6 +1113,7 @@ export default function App() {
             onGenerateBriefing={handleGenerateBriefing}
             onToggleBriefingCollapse={handleToggleBriefingCollapse}
             onDismissBriefing={handleDismissBriefing}
+            onSelectBriefingStory={handleSelectBriefingStory}
           />
 
           <ArticleView
@@ -1116,6 +1185,7 @@ export default function App() {
                   onGenerateBriefing={handleGenerateBriefing}
                   onToggleBriefingCollapse={handleToggleBriefingCollapse}
                   onDismissBriefing={handleDismissBriefing}
+                  onSelectBriefingStory={handleSelectBriefingStory}
                 />
               </div>
 
@@ -1153,6 +1223,7 @@ export default function App() {
                   onGenerateBriefing={handleGenerateBriefing}
                   onToggleBriefingCollapse={handleToggleBriefingCollapse}
                   onDismissBriefing={handleDismissBriefing}
+                  onSelectBriefingStory={handleSelectBriefingStory}
                 />
               </div>
 

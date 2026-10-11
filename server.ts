@@ -1116,102 +1116,356 @@ Respond ONLY with a valid JSON array matching this format:
 app.get('/api/ai/recommended-tech-feeds', handleRecommendedTechFeeds);
 app.post('/api/ai/recommended-tech-feeds', handleRecommendedTechFeeds);
 
-// AI Briefing: Synthesize unread items into an executive briefing
+// ======================== AI DAILY BRIEFING (MORNING DIGEST) ========================
+// One digest per day: a single paragraph, the day's recurring themes, and a ranked
+// Top 10. The Gemini path and the heuristic fallback share the same input
+// normalisation and the same response shape, so the client never has to branch on
+// which one produced the digest — only on `source`/`poweredBy` for honesty.
+
+const BRIEFING_MAX_INPUT = 30; // stories handed to Gemini
+const BRIEFING_MAX_STORIES = 10; // "Top 10 stories"
+const BRIEFING_FEED_CAP = 4; // prefer breadth over one prolific feed
+const STORY_FEED_CAP = 3; // ...tighter still for the published Top 10
+
+// Generic newsroom filler that would otherwise dominate the keyword tally.
+const TITLE_STOPWORDS = new Set([
+  'about', 'after', 'again', 'against', 'almost', 'along', 'already', 'also', 'although', 'always', 'among',
+  'another', 'around', 'article', 'articles', 'back', 'because', 'been', 'before', 'being', 'below', 'best',
+  'better', 'between', 'both', 'bring', 'brought', 'called', 'cannot', 'could', 'daily', 'does', 'doing', 'done',
+  'down', 'during', 'each', 'early', 'either', 'else', 'even', 'ever', 'every', 'first', 'following', 'from',
+  'episode', 'feed', 'feeds', 'getting', 'give', 'goes', 'going', 'good', 'great', 'have', 'having', 'here',
+  'interview', 'into', 'just', 'keep', 'know', 'month', 'number', 'podcast',
+  'last', 'later', 'least', 'less', 'like', 'little', 'made', 'make', 'many', 'might', 'more', 'most', 'much',
+  'must', 'need', 'never', 'news', 'next', 'nothing', 'often', 'only', 'other', 'others', 'over', 'part',
+  'people', 'perhaps', 'post', 'published', 'really', 'report', 'reports', 'right', 'said', 'same', 'says',
+  'second', 'seen', 'should', 'show', 'shown', 'since', 'some', 'still', 'story', 'stories', 'such', 'take',
+  'than', 'that', 'their', 'them', 'then', 'there', 'these', 'they', 'thing', 'things', 'this', 'those', 'three',
+  'through', 'time', 'today', 'told', 'took', 'toward', 'under', 'until', 'update', 'updates', 'upon', 'used',
+  'using', 'very', 'want', 'week', 'well', 'were', 'what', 'when', 'where', 'which', 'while', 'will', 'with',
+  'within', 'without', 'work', 'working', 'would', 'year', 'years', 'your'
+]);
+
+interface BriefingCandidate {
+  id?: string;
+  title: string;
+  feedTitle?: string;
+  link?: string;
+  pubDate?: string;
+  snippet?: string;
+}
+
+function normalizeTitle(title: string): string {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function publishTime(value?: string): number {
+  const t = new Date(String(value || '')).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * Newest first, one row per distinct headline, and a per-feed cap so a single
+ * prolific publication cannot own the digest. If the cap leaves us short, the
+ * remaining stories are appended in order: breadth is preferred, never padded.
+ */
+function rankBriefingStories(
+  candidates: BriefingCandidate[],
+  limit: number,
+  perFeedCap: number
+): BriefingCandidate[] {
+  const picked: BriefingCandidate[] = [];
+  const pickedKeys = new Set<string>();
+  const perFeed = new Map<string, number>();
+  const keyOf = (c: BriefingCandidate) => `${normalizeTitle(c.title)}|${c.feedTitle || ''}`;
+
+  for (const c of candidates) {
+    if (picked.length >= limit) break;
+    const key = keyOf(c);
+    if (pickedKeys.has(key)) continue;
+    const feedKey = (c.feedTitle || '').toLowerCase();
+    const used = perFeed.get(feedKey) || 0;
+    if (used >= perFeedCap) continue;
+    perFeed.set(feedKey, used + 1);
+    pickedKeys.add(key);
+    picked.push(c);
+  }
+
+  for (const c of candidates) {
+    if (picked.length >= limit) break;
+    const key = keyOf(c);
+    if (pickedKeys.has(key)) continue;
+    pickedKeys.add(key);
+    picked.push(c);
+  }
+
+  return picked;
+}
+
+/** Normalise, drop duplicates, newest first. No capping here. */
+function dedupeBriefingArticles(articles: any[]): BriefingCandidate[] {
+  const seen = new Set<string>();
+  const out: BriefingCandidate[] = [];
+  (articles || [])
+    .map((a) => ({
+      id: typeof a?.id === 'string' && a.id ? a.id : undefined,
+      title: String(a?.title || '').replace(/\s+/g, ' ').trim(),
+      feedTitle: String(a?.feedTitle || '').replace(/\s+/g, ' ').trim() || undefined,
+      link: typeof a?.link === 'string' ? a.link : undefined,
+      pubDate: typeof a?.pubDate === 'string' ? a.pubDate : undefined,
+      snippet: String(a?.snippet || a?.content || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 320)
+    }))
+    .filter((c) => c.title.length > 0)
+    .sort((a, b) => publishTime(b.pubDate) - publishTime(a.pubDate))
+    .forEach((c) => {
+      const key = normalizeTitle(c.title);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(c);
+    });
+  return out;
+}
+
+function titleCaseWord(word: string): string {
+  if (word.length <= 3) return word.toUpperCase();
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+/**
+ * Fallback themes. Real signal rather than a placeholder: recurring keywords
+ * across today's headlines, and if nothing recurs, where the coverage came from.
+ */
+function deriveHeuristicThemes(stories: BriefingCandidate[]) {
+  const counts = new Map<string, Set<number>>();
+  stories.forEach((c, index) => {
+    const words = `${c.title} ${c.snippet || ''}`.toLowerCase().match(/[a-z][a-z0-9+#.-]{3,}/g) || [];
+    const seen = new Set<string>();
+    for (const raw of words) {
+      const word = raw.replace(/^[.-]+|[.-]+$/g, '');
+      if (word.length < 4 || TITLE_STOPWORDS.has(word) || seen.has(word)) continue;
+      seen.add(word);
+      const set = counts.get(word) || new Set<number>();
+      set.add(index);
+      counts.set(word, set);
+    }
+  });
+
+  const recurring = Array.from(counts.entries())
+    .filter(([, ids]) => ids.size >= 2)
+    .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))
+    .slice(0, 5)
+    .map(([word, ids]) => ({
+      label: titleCaseWord(word),
+      description: `${ids.size} of ${stories.length} stories mention "${word}".`,
+      storyCount: ids.size
+    }));
+
+  if (recurring.length >= 2) return recurring;
+
+  const perFeed = new Map<string, number>();
+  stories.forEach((c) => {
+    const label = c.feedTitle || 'Subscriptions';
+    perFeed.set(label, (perFeed.get(label) || 0) + 1);
+  });
+  return Array.from(perFeed.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 5)
+    .map(([label, count]) => ({
+      label,
+      description: `${count} of ${stories.length} stories came from ${label}.`,
+      storyCount: count
+    }));
+}
+
+function buildHeuristicParagraph(stories: BriefingCandidate[], total: number): string {
+  const feeds = Array.from(new Set(stories.map((s) => s.feedTitle).filter(Boolean))) as string[];
+  const feedList = feeds.slice(0, 3).join(', ');
+  const lead = stories[0];
+  const second = stories[1];
+  const parts: string[] = [];
+
+  parts.push(
+    `Your digest covers ${total} unread ${total === 1 ? 'story' : 'stories'}${
+      feedList ? ` from ${feedList}` : ''
+    }${feeds.length > 3 ? ` and ${feeds.length - 3} more` : ''}.`
+  );
+  if (lead) {
+    parts.push(`The newest is "${lead.title}"${lead.feedTitle ? ` (${lead.feedTitle})` : ''}.`);
+  }
+  if (second) {
+    parts.push(`It is followed by "${second.title}"${second.feedTitle ? ` (${second.feedTitle})` : ''}.`);
+  }
+  return parts.join(' ');
+}
+
+// AI Briefing: synthesize the day's unread items into a Morning Digest
 app.post('/api/ai/briefing', async (req: Request, res: Response) => {
   const { articles } = req.body;
   if (!Array.isArray(articles) || articles.length === 0) {
     return res.status(400).json({ error: 'No unread articles provided to summarize.' });
   }
 
-  // Sample top unread stories (up to 20) with clean snippets
-  const sample = articles.slice(0, 20).map((a: any) => ({
-    title: (a.title || 'Untitled').trim(),
-    feedTitle: (a.feedTitle || '').trim(),
-    snippet: (a.snippet || a.content || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 320),
-    pubDate: a.pubDate
-  }));
-
-  try {
-    if (process.env.GEMINI_API_KEY) {
-      const prompt = `You are an expert executive news editor. Review these ${sample.length} unread RSS articles and create a high-impact briefing:\n\n${JSON.stringify(sample, null, 2)}\n\nInstructions:
-1. "executiveSummary": Write a 2 to 3 sentence overview of major themes, trends, or overarching news across all unread stories.
-2. "bulletPoints": Provide 3 to 5 high-impact bullet points summarizing the top individual news items.
-For each bullet point, include:
-- "headline": Short, punchy headline (5 to 10 words)
-- "summary": 1 to 2 sentence crisp summary of the development
-- "feedTitle": The source publication or author if known`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          systemInstruction: 'You are an intelligent executive news editor for a premium RSS reader. Synthesize unread articles into a concise, high-signal executive briefing.',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              executiveSummary: {
-                type: Type.STRING,
-                description: 'A 2-3 sentence overview of major themes across all unread news.'
-              },
-              bulletPoints: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    headline: { type: Type.STRING },
-                    summary: { type: Type.STRING },
-                    feedTitle: { type: Type.STRING }
-                  },
-                  required: ['headline', 'summary']
-                },
-                description: '3 to 5 high-impact bullet points summarizing the top individual news items.'
-              }
-            },
-            required: ['executiveSummary', 'bulletPoints']
-          }
-        }
-      });
-
-      const text = response.text?.trim();
-      if (text) {
-        const parsed = JSON.parse(text);
-        if (parsed.executiveSummary && Array.isArray(parsed.bulletPoints) && parsed.bulletPoints.length > 0) {
-          return res.json({
-            success: true,
-            executiveSummary: parsed.executiveSummary,
-            bulletPoints: parsed.bulletPoints,
-            articlesCount: sample.length,
-            generatedAt: new Date().toISOString(),
-            poweredBy: 'Gemini 3.8 Flash'
-          });
-        }
-      }
-    }
-  } catch (err: any) {
-    console.warn('[server] Gemini briefing note:', err.message);
+  const deduped = dedupeBriefingArticles(articles);
+  if (deduped.length === 0) {
+    return res.status(400).json({ error: 'No usable articles provided to summarize.' });
   }
 
-  // Heuristic synthesis fallback (e.g., if quota is exhausted or offline)
-  const topArticles = sample.slice(0, 5);
-  const feedNames = Array.from(new Set(sample.map((s: any) => s.feedTitle).filter(Boolean)));
-  const feedsStr = feedNames.length > 0 ? feedNames.slice(0, 3).join(', ') : 'your subscribed feeds';
+  const sample = rankBriefingStories(deduped, BRIEFING_MAX_INPUT, BRIEFING_FEED_CAP);
+  const fallbackStories = rankBriefingStories(deduped, BRIEFING_MAX_STORIES, STORY_FEED_CAP);
+  const generatedAt = new Date().toISOString();
 
-  const fallbackExecutiveSummary = `Your briefing synthesizes ${sample.length} unread dispatches from ${feedsStr}. Highlights include key technology announcements, platform updates, and developer discussions across your feeds.`;
+  if (process.env.GEMINI_API_KEY) {
+    const prompt = `You are the editor of a daily morning news digest. Below are ${
+      sample.length
+    } unread stories from a personal RSS reader, newest first. Each has an "id", title, feed, publish date and an excerpt.
 
-  const fallbackBulletPoints = topArticles.map((a: any) => ({
-    headline: a.title,
-    summary: a.snippet || `Latest updates reported from ${a.feedTitle || 'source'}.`,
-    feedTitle: a.feedTitle || 'RSS'
-  }));
+${JSON.stringify(sample, null, 2)}
 
+Produce a digest with exactly these three parts:
+1. "paragraph": ONE paragraph of 3 to 5 sentences summarising what matters across ALL of these stories — the through-line of the day. No bullet points, no preamble, never start with "In today's briefing".
+2. "themes": 3 to 5 broad themes that recur across the stories. For each give "label" (2 to 4 words, Title Case), "description" (one short sentence on what is happening under that theme) and "storyCount" (how many of the supplied stories fall under it).
+3. "topStories": the ${BRIEFING_MAX_STORIES} most significant stories, most significant first. For each give "id" (copied EXACTLY from the supplied story), "title" (the story's original title, unchanged) and "whyItMatters" (one short sentence).
+
+Only use the supplied stories. Never invent stories, sources, facts or ids.`;
+
+    // A three-rung model ladder. The digest is generated once a day, so a single
+    // transient 503 must not cost the reader their AI digest for the rest of the
+    // day (they would get keyword themes instead). The alias and the older pinned
+    // generation are the escape hatches; 503s come back in milliseconds, so the
+    // extra attempts are effectively free.
+    const briefingModels = [
+      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+      { id: 'gemini-flash-latest', label: 'Gemini Flash (latest)' },
+      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' }
+    ];
+
+    for (const { id: modelId, label: modelLabel } of briefingModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelId,
+          contents: prompt,
+          config: {
+            systemInstruction:
+              'You are an intelligent executive news editor for a premium RSS reader. You distil a day of unread stories into one honest, high-signal morning digest grounded strictly in the supplied stories.',
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                paragraph: {
+                  type: Type.STRING,
+                  description: 'One paragraph of 3-5 sentences covering the through-line of all supplied stories.'
+                },
+                themes: {
+                  type: Type.ARRAY,
+                  description: '3 to 5 themes recurring across the supplied stories.',
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      label: { type: Type.STRING, description: '2 to 4 words, Title Case.' },
+                      description: { type: Type.STRING },
+                      storyCount: { type: Type.INTEGER }
+                    },
+                    required: ['label']
+                  }
+                },
+                topStories: {
+                  type: Type.ARRAY,
+                  description: 'The 10 most significant stories, most significant first.',
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING, description: 'The exact id copied from the supplied story.' },
+                      title: { type: Type.STRING },
+                      whyItMatters: { type: Type.STRING }
+                    },
+                    required: ['id', 'title']
+                  }
+                }
+              },
+              required: ['paragraph', 'themes', 'topStories']
+            }
+          }
+        });
+
+        const text = response.text?.trim();
+        if (text) {
+          const parsed = JSON.parse(text);
+          const byId = new Map(sample.filter((s) => s.id).map((s) => [String(s.id), s]));
+          const byTitle = new Map(sample.map((s) => [normalizeTitle(s.title), s]));
+
+          // Hydrate every ranked story from our own input: a story the model was
+          // never given (or a mangled id) is dropped rather than published.
+          const topStories = (Array.isArray(parsed?.topStories) ? parsed.topStories : [])
+            .map((s: any) => {
+              const match =
+                (s?.id ? byId.get(String(s.id)) : undefined) ||
+                byTitle.get(normalizeTitle(String(s?.title || '')));
+              if (!match) return null;
+              const why = typeof s?.whyItMatters === 'string' ? s.whyItMatters.trim() : '';
+              return {
+                id: match.id,
+                title: match.title,
+                feedTitle: match.feedTitle,
+                link: match.link,
+                pubDate: match.pubDate,
+                whyItMatters: why || undefined
+              };
+            })
+            .filter(Boolean)
+            // The model can echo the same story twice (typically once with a mangled
+            // id and once by title). Keep the highest-ranked copy only.
+            .filter((s: any, index: number, all: any[]) => all.findIndex((o) => o.id === s.id) === index)
+            .slice(0, BRIEFING_MAX_STORIES);
+
+          const themes = (Array.isArray(parsed?.themes) ? parsed.themes : [])
+            .filter((t: any) => t && typeof t.label === 'string' && t.label.trim())
+            .slice(0, 5)
+            .map((t: any) => ({
+              label: String(t.label).trim(),
+              description: typeof t.description === 'string' ? t.description.trim() : undefined,
+              storyCount: Number.isFinite(Number(t.storyCount)) ? Number(t.storyCount) : undefined
+            }));
+
+          const paragraph = typeof parsed?.paragraph === 'string' ? parsed.paragraph.trim() : '';
+
+          if (paragraph && themes.length > 0 && topStories.length >= 3) {
+            return res.json({
+              success: true,
+              paragraph,
+              themes,
+              topStories,
+              articlesCount: sample.length,
+              generatedAt,
+              poweredBy: modelLabel,
+              source: 'gemini'
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[server] Gemini briefing note (${modelId}):`, err.message);
+      }
+    }
+  }
+
+  // Heuristic synthesis (no API key, quota exhausted, or an unusable response)
   return res.json({
     success: true,
-    executiveSummary: fallbackExecutiveSummary,
-    bulletPoints: fallbackBulletPoints,
+    paragraph: buildHeuristicParagraph(fallbackStories, sample.length),
+    // Themes describe the day's whole unread input (not just the published ten),
+    // so their counts stay consistent with `articlesCount` in the paragraph.
+    themes: deriveHeuristicThemes(sample),
+    topStories: fallbackStories,
     articlesCount: sample.length,
-    generatedAt: new Date().toISOString(),
-    poweredBy: 'Smart Synthesizer (Fallback)'
+    generatedAt,
+    poweredBy: 'Smart Synthesizer (Fallback)',
+    source: 'fallback'
   });
 });
 

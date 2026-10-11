@@ -25,7 +25,7 @@ import {
   Trash2,
   MoreHorizontal
 } from 'lucide-react';
-import { Feed, SmartFilter, AIBriefing, DEFAULT_FOLDER } from '../types';
+import { Feed, SmartFilter, AIBriefing, AIBriefingStory, DEFAULT_FOLDER } from '../types';
 import { PWAInstallGuide } from './PWAInstallGuide';
 import { AIBriefCard } from './AIBriefCard';
 import { formatTag, isMetaTag } from '../utils/tagUtils';
@@ -58,6 +58,7 @@ interface SidebarProps {
   onGenerateBriefing?: () => void;
   onToggleBriefingCollapse?: () => void;
   onDismissBriefing?: () => void;
+  onSelectBriefingStory?: (story: AIBriefingStory) => void;
 }
 
 interface FolderFeedsListProps {
@@ -173,7 +174,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isBriefingExpanded = true,
   onGenerateBriefing,
   onToggleBriefingCollapse,
-  onDismissBriefing
+  onDismissBriefing,
+  onSelectBriefingStory
 }) => {
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [feedActionTarget, setFeedActionTarget] = useState<Feed | null>(null);
@@ -313,6 +315,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onGenerate={onGenerateBriefing}
             onToggleCollapse={onToggleBriefingCollapse ?? (() => {})}
             onDismiss={onDismissBriefing ?? (() => {})}
+            onSelectStory={onSelectBriefingStory}
             variant="sidebar"
           />
         )}

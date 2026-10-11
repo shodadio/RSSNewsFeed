@@ -14,7 +14,7 @@ import {
   ArrowDown,
   RefreshCw
 } from 'lucide-react';
-import { Article, SmartFilter, Feed, AIBriefing } from '../types';
+import { Article, SmartFilter, Feed, AIBriefing, AIBriefingStory } from '../types';
 import { SwipeableArticleCard } from './SwipeableArticleCard';
 import { AIBriefCard } from './AIBriefCard';
 
@@ -45,6 +45,7 @@ interface TimelineProps {
   onGenerateBriefing?: () => void;
   onToggleBriefingCollapse?: () => void;
   onDismissBriefing?: () => void;
+  onSelectBriefingStory?: (story: AIBriefingStory) => void;
 }
 
 export const Timeline: React.FC<TimelineProps> = ({
@@ -73,7 +74,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   isBriefingExpanded = true,
   onGenerateBriefing,
   onToggleBriefingCollapse,
-  onDismissBriefing
+  onDismissBriefing,
+  onSelectBriefingStory
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [onlyUnread, setOnlyUnread] = useState(false);
@@ -325,6 +327,7 @@ export const Timeline: React.FC<TimelineProps> = ({
               onGenerate={onGenerateBriefing}
               onToggleCollapse={onToggleBriefingCollapse ?? (() => {})}
               onDismiss={onDismissBriefing ?? (() => {})}
+              onSelectStory={onSelectBriefingStory}
               variant="timeline"
             />
           </div>
