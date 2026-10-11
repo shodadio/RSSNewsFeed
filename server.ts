@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Load secrets from a local .env file (gitignored). No-op if the file is absent,
+// so AI Studio / Cloud Run env injection still works unchanged.
+import 'dotenv/config';
+
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
